@@ -10,10 +10,16 @@
         {
           "id": "uv",
           "name": "uv 工具 (0.9.10)",
-          "desc": "Python 包与环境管理器，后续安装步骤依赖它",
+          "desc": "Python 包与环境管理器，后续安装步骤依赖它（系统已装 uv 时自动识别）",
           "size_mb": 18,
           "required": true,
-          "check": { "all": [{ "type": "file", "path": "tools/uv/uv.exe" }] },
+          "check": {
+            "all": [],
+            "any": [
+              { "type": "file", "path": "tools/uv/uv.exe" },
+              { "type": "where", "path": "uv" }
+            ]
+          },
           "steps": [
             { "type": "mkdir", "path": "downloads" },
             { "type": "download", "files": [{ "url": "gh:astral-sh/uv/releases/download/0.9.10/uv-x86_64-pc-windows-msvc.zip", "to": "downloads/uv-0.9.10.zip", "size": 18300000 }] },
