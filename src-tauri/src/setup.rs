@@ -59,6 +59,9 @@ pub struct Component {
 pub struct Check {
     #[serde(default)]
     pub all: Vec<Rule>,
+    /// 任一满足即可（与 all 同时存在时取"与"）
+    #[serde(default)]
+    pub any: Vec<Rule>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -225,13 +228,38 @@ fn rule_ok(root: &Path, r: &Rule) -> bool {
             }
             n >= r.min_count.max(1)
         }
+        // 按 PATH 查找命令（如系统已装 uv：where uv 成功即视为可用）
+        "where" => resolve_on_path(&r.path).is_some(),
         _ => false,
     }
 }
 
+/// 在 PATH 上解析命令（Windows `where`），返回第一个存在的路径
+fn resolve_on_path(name: &str) -> Option<PathBuf> {
+    if name.trim().is_empty() {
+        return None;
+    }
+    let mut cmd = Command::new("where");
+    cmd.arg(name);
+    #[cfg(windows)]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.lines()
+        .map(|l| PathBuf::from(l.trim()))
+        .find(|p| p.exists())
+}
+
 pub fn component_installed(root: &Path, comp: &Component) -> bool {
     match &comp.check {
-        Some(c) if !c.all.is_empty() => c.all.iter().all(|r| rule_ok(root, r)),
+        Some(c) if !c.all.is_empty() || !c.any.is_empty() => {
+            let all_ok = c.all.iter().all(|r| rule_ok(root, r));
+            let any_ok = c.any.is_empty() || c.any.iter().any(|r| rule_ok(root, r));
+            all_ok && any_ok
+        }
         _ => false,
     }
 }
@@ -620,7 +648,13 @@ fn run_command(
         if p.is_absolute() {
             p
         } else {
-            root.join(step.exe.clone().unwrap_or_default())
+            let local = root.join(&exe_raw);
+            if local.exists() {
+                local
+            } else {
+                // 数据目录里没有 → 退回按 PATH 解析（如系统已安装的 uv）
+                resolve_on_path(&exe_raw).unwrap_or(local)
+            }
         }
     };
     if !exe.exists() {

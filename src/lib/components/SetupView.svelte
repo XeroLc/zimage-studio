@@ -159,7 +159,7 @@
 		{/if}
 	</div>
 
-	<div class="installbar" class:active={install.running || install.phase === 'done' || install.phase === 'error'}>
+	<div class="installbar">
 		{#if install.running}
 			<div class="ibar-main">
 				<div class="ibar-info">
@@ -346,10 +346,8 @@
 		border: 1px solid var(--border-subtle);
 		border-radius: var(--radius);
 		padding: 12px 16px;
-		display: none;
-	}
-	.installbar.active {
 		display: block;
+		box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.35);
 	}
 	.ibar-main {
 		display: flex;
