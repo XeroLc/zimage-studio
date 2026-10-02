@@ -227,20 +227,18 @@
               "strip_first": true
             },
             {
-              "type": "cmd",
-              "name": "安装姿势控制插件依赖",
+              "type": "pip_requirements",
+              "name": "安装姿势控制插件依赖（自动跳过需编译的包）",
               "exe": "tools/uv/uv.exe",
-              "args": [
-                "pip",
-                "install",
-                "--python",
-                "ComfyUI/.venv/Scripts/python.exe",
-                "-r",
-                "ComfyUI/custom_nodes/comfyui_controlnet_aux/requirements.txt"
+              "python": "ComfyUI/.venv/Scripts/python.exe",
+              "requirements": "ComfyUI/custom_nodes/comfyui_controlnet_aux/requirements.txt",
+              "drop": [
+                "albumentationsx"
               ],
               "env": {
                 "UV_DEFAULT_INDEX": "{{PYPI_INDEX}}"
-              }
+              },
+              "timeout_secs": 3600
             },
             {
               "type": "write_file",

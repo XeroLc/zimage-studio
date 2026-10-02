@@ -143,6 +143,16 @@ pub struct Step {
     pub resource: Option<String>,
     #[serde(default)]
     pub marker: Option<String>,
+    /// pip_requirements 步骤：requirements 文件（相对数据目录）
+    #[serde(default)]
+    pub requirements: Option<String>,
+    /// pip_requirements 步骤：需要跳过的包名（大小写不敏感；用于无 Windows 轮子、
+    /// 需现场编译的包，如 albumentationsx→stringzilla 链）
+    #[serde(default)]
+    pub drop: Option<Vec<String>>,
+    /// pip_requirements 步骤：目标 venv 的 python 路径
+    #[serde(default)]
+    pub python: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -1151,6 +1161,65 @@ async fn run_step(
             }
             fs::copy(&src, &to).map_err(|e| format!("应用补丁失败: {e}"))?;
             Ok(())
+        }
+        "pip_requirements" => {
+            // 读取 requirements → 按 drop 列表过滤（跳过需现场编译的包）→ 落盘为过滤版 → 走 cmd 安装（含换源重试）
+            let req_rel = step.requirements.clone().unwrap_or_default();
+            let src = root.join(&req_rel);
+            let text = fs::read_to_string(&src)
+                .map_err(|e| format!("读取 {} 失败: {e}", src.display()))?;
+            let drops: Vec<String> = step
+                .drop
+                .clone()
+                .unwrap_or_default()
+                .iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .collect();
+            let filtered: String = {
+                let mut out = String::new();
+                for line in text.lines() {
+                    let l = line.trim();
+                    if !l.is_empty() && !l.starts_with('#') {
+                        let name = l
+                            .split(|c: char| {
+                                matches!(c, '[' | '<' | '>' | '=' | '!' | ';' | ' ' | '\t')
+                            })
+                            .next()
+                            .unwrap_or("")
+                            .trim()
+                            .to_ascii_lowercase();
+                        if drops.iter().any(|d| d == &name) {
+                            out.push_str(&format!("# [zimg skip] {}\n", line));
+                            continue;
+                        }
+                    }
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                out
+            };
+            let dst_dir = root.join("downloads");
+            fs::create_dir_all(&dst_dir).map_err(|e| e.to_string())?;
+            let base = short_name(&req_rel);
+            let dst = dst_dir.join(format!("{base}.filtered.txt"));
+            fs::write(&dst, filtered).map_err(|e| e.to_string())?;
+
+            let mut eff_step = step.clone();
+            eff_step.kind = "cmd".into();
+            let mut args = vec!["pip".to_string(), "install".to_string()];
+            if let Some(py) = &step.python {
+                if !py.is_empty() {
+                    args.push("--python".into());
+                    args.push(py.clone());
+                }
+            }
+            args.push("-r".into());
+            args.push(dst.to_string_lossy().replace('\\', "/"));
+            eff_step.args = Some(args);
+            let attempts = eff.cmd_attempts(root, &eff_step);
+            set_phase(ctl, "step", &format!("执行：{}", label));
+            publish(app, ctl);
+            run_command(app, ctl, &eff_step, root, &attempts)
         }
         other => Err(format!("未知步骤类型: {other}")),
     }
