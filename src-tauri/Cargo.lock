@@ -5649,7 +5649,7 @@ dependencies = [
 
 [[package]]
 name = "zimage-studio"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "futures-util",
  "log",

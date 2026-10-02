@@ -14,17 +14,21 @@
 	onMount(() => {
 		store.init();
 		store.poll();
-		// 2s 轮询，且窗口隐藏（托盘/后台）时暂停，避免无谓唤醒与刷新
-		const tick = () => {
-			if (!document.hidden) store.poll();
+		// 自适应轮询：空闲（已停止/错误）5s、启动/运行中 1s；窗口隐藏（托盘/后台）时暂停
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const tick = async () => {
+			if (!document.hidden) await store.poll();
+			const s = store.status.state;
+			const delay = s === 'stopped' || s === 'error' ? 5000 : 1000;
+			timer = setTimeout(tick, delay);
 		};
-		const timer = setInterval(tick, 2000);
+		timer = setTimeout(tick, 1200);
 		const onVis = () => {
 			if (!document.hidden) store.poll();
 		};
 		document.addEventListener('visibilitychange', onVis);
 		return () => {
-			clearInterval(timer);
+			if (timer) clearTimeout(timer);
 			document.removeEventListener('visibilitychange', onVis);
 			store.destroy();
 		};

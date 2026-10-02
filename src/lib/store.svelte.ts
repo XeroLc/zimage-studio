@@ -363,7 +363,10 @@ class StudioStore {
     try {
       const st = await api.getStatus();
       const wasReady = this.#prevRunState === 'ready';
-      this.status = st;
+      // 无变化时不重新赋值，避免触发无谓的响应式更新与重绘
+      if (JSON.stringify(st) !== JSON.stringify(this.status)) {
+        this.status = st;
+      }
       this.#prevRunState = st.state;
 
       if (!this.#tabApplied && st.initial_tab !== 'image') {
@@ -397,7 +400,9 @@ class StudioStore {
     }
     try {
       const ti = await api.getTrainInfo();
-      this.train = ti;
+      if (JSON.stringify(ti) !== JSON.stringify(this.train)) {
+        this.train = ti;
+      }
       if (ti.state !== 'idle') {
         this.trainLog = await api.getTrainLog();
       }

@@ -348,6 +348,46 @@ pub struct EffectiveSources {
     pub models_id: String,
     /// 模型通道为 auto 时允许下载失败后自动切换备用源
     pub allow_model_fallback: bool,
+    /// 各通道全部候选（优选的放首位；用于命令行步骤失败后的换源重试）
+    pub github_all: Vec<(String, String)>, // (id, prefix)
+    pub pypi_all: Vec<(String, String)>,   // (id, index)
+    pub torch_all: Vec<(String, String)>,  // (id, index)
+}
+
+impl EffectiveSources {
+    fn channel_auto(&self, channel: &str) -> bool {
+        self.channels
+            .iter()
+            .find(|c| c.channel == channel)
+            .map(|c| c.auto)
+            .unwrap_or(false)
+    }
+}
+
+/// 命令替换变量（与 EffectiveSources 解耦，重试时按尝试项生成）
+#[derive(Clone)]
+pub struct SubstVars {
+    pub root: String,
+    pub pypi_index: String,
+    pub torch_index: String,
+    pub python_mirror: String,
+}
+
+fn vars_with(
+    root: &Path,
+    pypi_index: &str,
+    torch_index: &str,
+    github_prefix: &str,
+) -> SubstVars {
+    SubstVars {
+        root: root.to_string_lossy().replace('\\', "/"),
+        pypi_index: pypi_index.to_string(),
+        torch_index: torch_index.to_string(),
+        python_mirror: format!(
+            "{}astral-sh/python-build-standalone/releases/download",
+            github_prefix
+        ),
+    }
 }
 
 fn source_cache_path() -> PathBuf {
@@ -539,6 +579,31 @@ pub async fn resolve_sources(
         .map(|c| c.id.clone())
         .unwrap_or_else(|| "modelscope".into());
 
+    // 全部候选（优选/指定者放首位），供命令行失败换源重试
+    let ordered = |ch: &str, pick: &dyn Fn(&SourceCandidate) -> String| -> Vec<(String, String)> {
+        let chosen_id = channels
+            .iter()
+            .find(|c| c.channel == ch)
+            .map(|c| c.id.clone())
+            .unwrap_or_default();
+        let mut v: Vec<(String, String)> = candidates_for(&manifest.sources, ch)
+            .iter()
+            .map(|c| (c.id.clone(), pick(c)))
+            .filter(|(_, val)| !val.is_empty())
+            .collect();
+        v.sort_by_key(|(id, _)| if *id == chosen_id { 0 } else { 1 });
+        v
+    };
+    let github_all = ordered("github", &|c| {
+        if c.prefix.is_empty() {
+            "https://gh-proxy.com/https://github.com/".into()
+        } else {
+            c.prefix.clone()
+        }
+    });
+    let pypi_all = ordered("pypi", &|c| c.index.clone());
+    let torch_all = ordered("torch", &|c| c.index.clone());
+
     EffectiveSources {
         allow_model_fallback: cfg.sources.models == "auto",
         channels,
@@ -546,6 +611,9 @@ pub async fn resolve_sources(
         pypi_index,
         torch_index,
         models_id,
+        github_all,
+        pypi_all,
+        torch_all,
     }
 }
 
@@ -819,6 +887,7 @@ pub async fn run_install(
                 s.phase = "cancelled".into();
                 s.message = "已取消".into();
             } else {
+                let e = format!("{e}（应用 v{}）", env!("CARGO_PKG_VERSION"));
                 s.phase = "error".into();
                 s.error = e.clone();
                 s.message = e;
@@ -1020,9 +1089,10 @@ async fn run_step(
         "cmd" => {
             let step2 = step.clone();
             let root2 = root.to_path_buf();
+            let attempts = eff.cmd_attempts(root, step);
             set_phase(ctl, "step", &format!("执行：{}", label));
             publish(app, ctl);
-            run_command(app, ctl, &step2, &root2, eff)
+            run_command(app, ctl, &step2, &root2, &attempts)
         }
         "write_file" => {
             let to = root.join(step.to.clone().unwrap_or_default());
@@ -1033,7 +1103,7 @@ async fn run_step(
             } else {
                 step.content.clone().unwrap_or_default()
             };
-            let content = subst(&content, root, eff);
+            let content = subst(&content, &eff.base_vars(root));
             let content = if step.crlf.unwrap_or(false) {
                 content.replace("\r\n", "\n").replace('\n', "\r\n")
             } else {
@@ -1089,19 +1159,73 @@ fn short_name(p: &str) -> String {
     p.rsplit('/').next().unwrap_or(p).to_string()
 }
 
-/// 变量替换：{{ROOT}} / {{PYPI_INDEX}} / {{TORCH_INDEX}} / {{PYTHON_MIRROR}}（由生效源决定）
-fn subst(s: &str, root: &Path, eff: &EffectiveSources) -> String {
-    let r = root.to_string_lossy().replace('\\', "/");
-    s.replace("{{ROOT}}", &r)
-        .replace("{{PYPI_INDEX}}", &eff.pypi_index)
-        .replace("{{TORCH_INDEX}}", &eff.torch_index)
-        .replace(
-            "{{PYTHON_MIRROR}}",
-            &format!(
-                "{}astral-sh/python-build-standalone/releases/download",
-                eff.github_prefix
-            ),
-        )
+/// 变量替换：{{ROOT}} / {{PYPI_INDEX}} / {{TORCH_INDEX}} / {{PYTHON_MIRROR}}
+fn subst(s: &str, vars: &SubstVars) -> String {
+    s.replace("{{ROOT}}", &vars.root)
+        .replace("{{PYPI_INDEX}}", &vars.pypi_index)
+        .replace("{{TORCH_INDEX}}", &vars.torch_index)
+        .replace("{{PYTHON_MIRROR}}", &vars.python_mirror)
+}
+
+impl EffectiveSources {
+    /// 基础替换变量（首选源）
+    fn base_vars(&self, root: &Path) -> SubstVars {
+        vars_with(root, &self.pypi_index, &self.torch_index, &self.github_prefix)
+    }
+
+    /// 命令行步骤的尝试序列：用到哪个模板变量，就按该通道的候选依次尝试（auto 通道才换源）
+    fn cmd_attempts(&self, root: &Path, step: &Step) -> Vec<(String, SubstVars)> {
+        let mut text = step.args.clone().unwrap_or_default().join(" ");
+        if let Some(env) = &step.env {
+            for v in env.values() {
+                text.push(' ');
+                text.push_str(v);
+            }
+        }
+        if text.contains("{{TORCH_INDEX}}")
+            && self.channel_auto("torch")
+            && self.torch_all.len() > 1
+        {
+            return self
+                .torch_all
+                .iter()
+                .map(|(id, idx)| {
+                    (
+                        format!("torch:{id}"),
+                        vars_with(root, &self.pypi_index, idx, &self.github_prefix),
+                    )
+                })
+                .collect();
+        }
+        if text.contains("{{PYPI_INDEX}}") && self.channel_auto("pypi") && self.pypi_all.len() > 1 {
+            return self
+                .pypi_all
+                .iter()
+                .map(|(id, idx)| {
+                    (
+                        format!("pypi:{id}"),
+                        vars_with(root, idx, &self.torch_index, &self.github_prefix),
+                    )
+                })
+                .collect();
+        }
+        if text.contains("{{PYTHON_MIRROR}}")
+            && self.channel_auto("github")
+            && self.github_all.len() > 1
+        {
+            return self
+                .github_all
+                .iter()
+                .map(|(id, prefix)| {
+                    (
+                        format!("github:{id}"),
+                        vars_with(root, &self.pypi_index, &self.torch_index, prefix),
+                    )
+                })
+                .collect();
+        }
+        vec![("primary".into(), self.base_vars(root))]
+    }
 }
 
 /// 资源 URL 前缀解析（gh: 走当前 GitHub 通道前缀）
@@ -1137,6 +1261,7 @@ fn split_repo_path(rest: &str) -> (String, String) {
 
 /// 单个文件的可尝试 URL 列表：
 /// - auto 模式：主源优先（模型通道选了 HF-Mirror 时备用源提前），失败可切换
+/// - GitHub 前缀类（gh:）在 auto 下附加另一种前缀（gh-proxy ↔ 直连）
 /// - 手动指定：只用首选源（忠实用户选择）
 fn candidate_urls(f: &DownloadFile, eff: &EffectiveSources) -> Vec<String> {
     let primary = resolve_url(&f.url, eff);
@@ -1144,14 +1269,22 @@ fn candidate_urls(f: &DownloadFile, eff: &EffectiveSources) -> Vec<String> {
     if let Some(alt) = &f.alt {
         let alt_url = resolve_url(alt, eff);
         if eff.models_id == "hfm" && f.url.starts_with("ms:") {
-            list = vec![alt_url.clone(), primary];
+            list = vec![alt_url, primary];
         } else {
             list.push(alt_url);
         }
     }
-    if !eff.allow_model_fallback {
+    if f.url.starts_with("gh:") && eff.channel_auto("github") && eff.github_all.len() > 1 {
+        let rest = &f.url[3..];
+        for (_id, prefix) in eff.github_all.iter().skip(1) {
+            list.push(format!("{prefix}{rest}"));
+        }
+    }
+    if (f.url.starts_with("ms:") || f.url.starts_with("hf:")) && !eff.allow_model_fallback {
         list.truncate(1);
     }
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|u| seen.insert(u.clone()));
     list
 }
 
@@ -1193,7 +1326,36 @@ fn run_command(
     ctl: &Arc<InstallCtl>,
     step: &Step,
     root: &Path,
-    eff: &EffectiveSources,
+    attempts: &[(String, SubstVars)],
+) -> Result<(), String> {
+    let mut last_err = String::new();
+    for (i, (label, vars)) in attempts.iter().enumerate() {
+        if ctl.cancel.load(Ordering::Relaxed) {
+            return Err("已取消".into());
+        }
+        if i > 0 {
+            set_phase(ctl, "step", &format!("上一步失败，更换下载源重试（{label}）…"));
+            publish(app, ctl);
+        }
+        match run_command_once(app, ctl, step, root, vars) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = e;
+                if attempts.len() > 1 && i + 1 < attempts.len() {
+                    continue;
+                }
+            }
+        }
+    }
+    Err(last_err)
+}
+
+fn run_command_once(
+    app: &AppHandle,
+    ctl: &Arc<InstallCtl>,
+    step: &Step,
+    root: &Path,
+    vars: &SubstVars,
 ) -> Result<(), String> {
     let exe_raw = step.exe.clone().unwrap_or_default();
     let exe = {
@@ -1216,13 +1378,13 @@ fn run_command(
     let mut cmd = Command::new(&exe);
     if let Some(args) = &step.args {
         for a in args {
-            cmd.arg(subst(a, root, eff));
+            cmd.arg(subst(a, vars));
         }
     }
     cmd.current_dir(root);
     if let Some(env) = &step.env {
         for (k, v) in env {
-            cmd.env(k, subst(v, root, eff));
+            cmd.env(k, subst(v, vars));
         }
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
