@@ -186,6 +186,21 @@ export interface UpdateProgress {
   message: string;
 }
 
+export interface MigrateProgress {
+  phase: string;
+  copied: number;
+  total: number;
+  files: number;
+  message: string;
+}
+
+export interface MigrateReport {
+  mode: string;
+  files: number;
+  bytes: number;
+  new_root: string;
+}
+
 export const api = {
   // config / status
   getConfig: () => invoke<AppConfig>('get_config'),
@@ -228,5 +243,8 @@ export const api = {
   // 自研更新（绕 CDN 缓存 + 签名校验；安装时应用会退出并交由安装器接管）
   checkUpdateRemote: () => invoke<RemoteUpdate>('check_update_remote'),
   downloadInstallUpdate: (url: string, signature: string, version: string) =>
-    invoke<void>('download_install_update', { url, signature, version })
+    invoke<void>('download_install_update', { url, signature, version }),
+
+  // 数据目录迁移
+  migrateDataRoot: (newRoot: string) => invoke<MigrateReport>('migrate_data_root', { newRoot })
 };

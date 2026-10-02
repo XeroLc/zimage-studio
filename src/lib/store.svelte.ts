@@ -165,6 +165,14 @@ class StudioStore {
     error: string;
   }>({ running: false, rows: null, error: '' });
 
+  /** 数据目录迁移状态 */
+  migrate = $state<{ running: boolean; phase: string; message: string; pct: number }>({
+    running: false,
+    phase: '',
+    message: '',
+    pct: 0
+  });
+
   // ---------------- gallery (workspace) ----------------
   outputs = $state<OutputItem[]>([]);
 
@@ -230,10 +238,21 @@ class StudioStore {
     const ids: string[] = [];
     for (const g of this.setup?.groups ?? []) {
       for (const c of g.components) {
-        if (this.selected[c.id] && !c.installed) ids.push(c.id);
+        if (this.selected[c.id]) ids.push(c.id); // 已安装也可选中 → 支持"重新安装/修复"
       }
     }
     return ids;
+  });
+
+  /** 选中项中已安装的数量（用于安装按钮文案：安装 / 修复 / 重新安装） */
+  selectedInstalledCount = $derived.by(() => {
+    let n = 0;
+    for (const g of this.setup?.groups ?? []) {
+      for (const c of g.components) {
+        if (this.selected[c.id] && c.installed) n++;
+      }
+    }
+    return n;
   });
 
   async init() {
@@ -280,6 +299,17 @@ class StudioStore {
         // 启动自动同步（或后台同步）完成后刷新资源中心
         await listen('setup://manifest-synced', () => {
           if (this.setup) void this.refreshSetup(false);
+        })
+      );
+      this.#unlisten.push(
+        await listen<import('./api').MigrateProgress>('migrate://progress', (ev) => {
+          const p = ev.payload;
+          this.migrate = {
+            running: true,
+            phase: p.phase,
+            message: p.message,
+            pct: p.total ? Math.min(100, Math.round((p.copied / p.total) * 100)) : 0
+          };
         })
       );
       this.#unlisten.push(
@@ -628,6 +658,25 @@ class StudioStore {
     await this.save();
     await this.refreshSetup();
     await this.poll();
+  }
+
+  /** 迁移数据目录（移动整个环境到新位置） */
+  async runMigrate(newRoot: string) {
+    if (this.migrate.running) return;
+    this.migrate = { running: true, phase: 'scan', message: '准备迁移…', pct: 0 };
+    try {
+      const r = await api.migrateDataRoot(newRoot);
+      this.migrate = { running: false, phase: 'done', message: '', pct: 100 };
+      this.toast(
+        `数据目录已迁移到 ${r.new_root}（${r.mode === 'rename' ? '快速移动' : '复制完成'}，${r.files} 个文件）`,
+        6000
+      );
+      await this.refreshSetup(false);
+      await this.poll();
+    } catch (e) {
+      this.migrate = { running: false, phase: 'error', message: String((e as Error)?.message ?? e), pct: 0 };
+      this.toast('迁移失败：' + this.migrate.message, 7000);
+    }
   }
 
   // ----- gallery -----

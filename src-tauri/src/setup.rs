@@ -28,6 +28,10 @@ pub struct Manifest {
     pub note: String,
     #[serde(default)]
     pub sources: ManifestSources,
+    /// 本清单所需的最低应用版本（清单 schema 演进时设置；
+    /// 低于此版本的客户端会忽略已同步副本、回退内置清单）
+    #[serde(default)]
+    pub min_app: String,
     pub groups: Vec<Group>,
 }
 
@@ -229,8 +233,8 @@ fn bundled_manifest_path(resource_dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-/// 载入清单：已同步副本仅在其 version >= 内置版本时才优先
-/// （防止早期同步的旧副本永久盖住随安装包更新的新清单）
+/// 载入清单：已同步副本仅在其 version >= 内置版本、且 min_app 不高于当前应用版本时才优先
+/// （防止早期同步的旧副本永久盖住新清单；也防止新 schema 喂给旧客户端）
 pub fn load_manifest(resource_dir: &Path) -> Result<(Manifest, &'static str), String> {
     let synced = synced_manifest_path();
     let synced_parsed = fs::read_to_string(&synced)
@@ -243,10 +247,24 @@ pub fn load_manifest(resource_dir: &Path) -> Result<(Manifest, &'static str), St
     let bundled_parsed: Manifest =
         serde_json::from_str(&bundled_text).map_err(|e| format!("资源清单解析失败: {e}"))?;
 
-    match synced_parsed {
-        Some(s) if s.version >= bundled_parsed.version => Ok((s, "synced")),
-        _ => Ok((bundled_parsed, "bundled")),
+    if let Some(s) = synced_parsed {
+        let version_ok = s.version >= bundled_parsed.version;
+        let min_app_ok = if s.min_app.trim().is_empty() {
+            true
+        } else {
+            match (
+                semver::Version::parse(env!("CARGO_PKG_VERSION")),
+                semver::Version::parse(s.min_app.trim()),
+            ) {
+                (Ok(cur), Ok(min)) => cur >= min,
+                _ => true, // 版本号异常时不拦截（以 version 规则为准）
+            }
+        };
+        if version_ok && min_app_ok {
+            return Ok((s, "synced"));
+        }
     }
+    Ok((bundled_parsed, "bundled"))
 }
 
 fn resource_path(resource_dir: &Path, rel: &str) -> Option<PathBuf> {
@@ -914,6 +932,25 @@ pub async fn run_install(
     let _ = app.emit("setup://progress", snap);
 }
 
+/// 确保共享模型库挂接文件存在（缺则从模板生成）。
+/// 应用层兜底：无论用户以什么顺序/子集安装组件，模型都能被 ComfyUI 找到。
+pub fn ensure_extra_model_paths(root: &Path, resource_dir: &Path) -> Result<bool, String> {
+    let target = root.join("ComfyUI").join("extra_model_paths.yaml");
+    if target.exists() {
+        return Ok(false);
+    }
+    let tpl = resource_path(resource_dir, "templates/extra_model_paths.yaml")
+        .ok_or_else(|| "找不到模型路径模板".to_string())?;
+    let content = fs::read_to_string(&tpl).map_err(|e| e.to_string())?;
+    let r = root.to_string_lossy().replace('\\', "/");
+    let content = content.replace("{{ROOT}}", &r);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&target, content).map_err(|e| format!("写入 extra_model_paths.yaml 失败: {e}"))?;
+    Ok(true)
+}
+
 async fn install_inner(
     app: &AppHandle,
     ctl: &Arc<InstallCtl>,
@@ -927,6 +964,9 @@ async fn install_inner(
     fs::create_dir_all(&root).map_err(|e| format!("无法创建数据目录: {e}"))?;
     let (manifest, _) = load_manifest(resource_dir)?;
     let client = build_client();
+
+    // 任何安装批次都先确保模型库挂接文件存在（先装模型后装 ComfyUI 也能正确挂接）
+    let _ = ensure_extra_model_paths(&root, resource_dir);
 
     // 解析下载源（auto 通道在此刻测速优选；结果缓存 24h）
     {

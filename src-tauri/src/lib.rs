@@ -1,6 +1,7 @@
 mod comfy;
 mod config;
 mod download;
+mod migrate;
 mod setup;
 mod train;
 mod update;
@@ -158,6 +159,24 @@ pub fn run() {
                 }
             }
 
+            // 启动兜底：ComfyUI 已存在但缺模型库挂接文件时补齐（历史中断安装的自愈）
+            {
+                let st = app.state::<Mutex<AppState>>();
+                let root = st.lock().unwrap().config.root();
+                if let Some(root) = root {
+                    if root.join("ComfyUI").join("main.py").exists() {
+                        if let Ok(res) = app.path().resource_dir() {
+                            match setup::ensure_extra_model_paths(&root, &res) {
+                                Ok(true) => {
+                                    let _ = app.emit("app://notice", "已补齐模型库挂接文件（extra_model_paths.yaml）");
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -205,6 +224,8 @@ pub fn run() {
             // 更新（自研：绕缓存检查 + 签名校验 + 静默安装）
             update::check_update_remote,
             update::download_install_update,
+            // 数据目录迁移
+            migrate::migrate_data_root,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

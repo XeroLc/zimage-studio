@@ -1,5 +1,6 @@
 {
-  "version": 2,
+  "version": 3,
+  "min_app": "0.2.6",
   "updated": "2026-10-02",
   "note": "Z-Image Studio 资源清单 —— 一键/按需把整套生图与训练环境配置到所选数据目录",
   "sources": {
@@ -136,6 +137,10 @@
               {
                 "type": "file",
                 "path": "ComfyUI/custom_nodes/comfyui_controlnet_aux/__init__.py"
+              },
+              {
+                "type": "file",
+                "path": "ComfyUI/extra_model_paths.yaml"
               }
             ]
           },
