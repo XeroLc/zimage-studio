@@ -1,0 +1,76 @@
+---
+# Z-Image Turbo 角色 LoRA 训练配置（8GB 显存）
+# 用法：把你的角色图（10~30 张）+ 同名 .txt 描述文件放进
+#      {{ROOT}}/ai-toolkit/datasets/character/  然后双击 train_zimage.bat
+job: extension
+config:
+  # 训练任务名（输出文件夹名）
+  name: "zimage_character_v1"
+  process:
+    - type: 'sd_trainer'
+      training_folder: "{{ROOT}}/outputs/training"
+      device: cuda:0
+      network:
+        type: "lora"
+        # LoRA 维度：人物建议 16~32（8GB 显存建议先用 16，若效果不足改 32）
+        linear: 16
+        linear_alpha: 16
+      save:
+        dtype: bf16
+        save_every: 250
+        max_step_saves_to_keep: 6
+      datasets:
+        - folder_path: "{{ROOT}}/ai-toolkit/datasets/character"
+          caption_ext: "txt"
+          caption_dropout_rate: 0.05
+          shuffle_tokens: false
+          cache_latents_to_disk: true
+          # 8GB 显存建议先用 512；训练顺利可改 [ 512, 768 ] 增加泛化（更慢）
+          resolution: [ 512 ]
+      train:
+        batch_size: 1
+        cache_text_embeddings: true
+        # 总步数：1500~4000 区间；不够收敛先加步数、别加学习率
+        steps: 3000
+        gradient_accumulation: 1
+        train_unet: true
+        train_text_encoder: false
+        gradient_checkpointing: true
+        noise_scheduler: "flowmatch"
+        optimizer: "adamw8bit"
+        # 学习率 1e-4 起步；过拟合/伪影降低到 5e-5
+        lr: 1e-4
+        dtype: bf16
+        skip_first_sample: true
+        disable_sampling: true
+      model:
+        name_or_path: "{{ROOT}}/models/diffusion_models/z_image_turbo_int8_convrot.safetensors"
+        extras_name_or_path: "{{ROOT}}/models/training/z-image-turbo-diffusers"
+        arch: "zimage"
+        # 去蒸馏训练适配器 v2（推理时自动移除，保留 8 步速度）
+        assistant_lora_path: "{{ROOT}}/models/training/zimage_turbo_training_adapter_v2.safetensors"
+        # float8 量化训练（8GB 显存必需）
+        quantize: true
+        qtype: "convrot8"
+        quantize_te: false
+
+        low_vram: true
+        # 8GB 显存必需：分层卸载（自动启用 float8 量化）
+        layer_offloading: true
+      sample:
+        sampler: "flowmatch"
+        sample_every: 250
+        sample_start_step: 0
+        width: 512
+        height: 512
+        prompts:
+          - "a photo of [trigger], close-up portrait, natural light"
+          - "a photo of [trigger], full body, standing in a city street"
+        neg: ""
+        seed: 42
+        walk_seed: true
+        guidance_scale: 1
+        sample_steps: 8
+meta:
+  name: "[name]"
+  version: '1.0'

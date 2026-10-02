@@ -1,0 +1,220 @@
+{
+  "version": 1,
+  "updated": "2026-10-02",
+  "note": "Z-Image Studio 资源清单 —— 一键/按需把整套生图与训练环境配置到所选数据目录",
+  "groups": [
+    {
+      "id": "core",
+      "name": "运行环境",
+      "components": [
+        {
+          "id": "uv",
+          "name": "uv 工具 (0.9.10)",
+          "desc": "Python 包与环境管理器，后续安装步骤依赖它",
+          "size_mb": 18,
+          "required": true,
+          "check": { "all": [{ "type": "file", "path": "tools/uv/uv.exe" }] },
+          "steps": [
+            { "type": "mkdir", "path": "downloads" },
+            { "type": "download", "files": [{ "url": "gh:astral-sh/uv/releases/download/0.9.10/uv-x86_64-pc-windows-msvc.zip", "to": "downloads/uv-0.9.10.zip", "size": 18300000 }] },
+            { "type": "unzip", "from": "downloads/uv-0.9.10.zip", "to": "tools/uv", "strip_first": false }
+          ]
+        },
+        {
+          "id": "comfyui",
+          "name": "ComfyUI 引擎 (v0.38.0)",
+          "desc": "生图引擎 + 独立 Python 3.11 环境 + CUDA 版 PyTorch（约 7GB 下载，最久的一步）",
+          "size_mb": 8300,
+          "required": true,
+          "check": {
+            "all": [
+              { "type": "file", "path": "ComfyUI/main.py" },
+              { "type": "file", "path": "ComfyUI/.venv/Scripts/python.exe" },
+              { "type": "file", "path": "ComfyUI/custom_nodes/comfyui_controlnet_aux/__init__.py" }
+            ]
+          },
+          "steps": [
+            { "type": "mkdir", "path": "downloads" },
+            { "type": "download", "files": [{ "url": "gh:comfyanonymous/ComfyUI/archive/refs/tags/v0.38.0.zip", "to": "downloads/ComfyUI-v0.38.0.zip", "size": 30000000 }] },
+            { "type": "unzip", "from": "downloads/ComfyUI-v0.38.0.zip", "to": "ComfyUI", "strip_first": true },
+            { "type": "cmd", "name": "创建 Python 3.11 环境", "exe": "tools/uv/uv.exe", "args": ["venv", "--python", "3.11", "--python-preference", "only-managed", "ComfyUI/.venv"], "env": { "UV_PYTHON_INSTALL_DIR": "{{ROOT}}/uv-python", "UV_PYTHON_INSTALL_MIRROR": "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download", "UV_DEFAULT_INDEX": "https://pypi.tuna.tsinghua.edu.cn/simple" } },
+            { "type": "cmd", "name": "安装 PyTorch 2.13.0+cu130（约 2.6GB）", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ComfyUI/.venv/Scripts/python.exe", "torch==2.13.0", "torchvision==0.28.0", "torchaudio==2.11.0", "--index-url", "https://download.pytorch.org/whl/cu130", "--extra-index-url", "https://pypi.tuna.tsinghua.edu.cn/simple"] },
+            { "type": "cmd", "name": "安装 ComfyUI 依赖", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ComfyUI/.venv/Scripts/python.exe", "-r", "ComfyUI/requirements.txt"], "env": { "UV_DEFAULT_INDEX": "https://pypi.tuna.tsinghua.edu.cn/simple" } },
+            { "type": "download", "files": [{ "url": "gh:Fannovel16/comfyui_controlnet_aux/archive/refs/heads/main.zip", "to": "downloads/controlnet_aux-main.zip", "size": 25000000 }] },
+            { "type": "unzip", "from": "downloads/controlnet_aux-main.zip", "to": "ComfyUI/custom_nodes/comfyui_controlnet_aux", "strip_first": true },
+            { "type": "cmd", "name": "安装姿势控制插件依赖", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ComfyUI/.venv/Scripts/python.exe", "-r", "ComfyUI/custom_nodes/comfyui_controlnet_aux/requirements.txt"], "env": { "UV_DEFAULT_INDEX": "https://pypi.tuna.tsinghua.edu.cn/simple" } },
+            { "type": "write_file", "name": "写入共享模型库配置", "to": "ComfyUI/extra_model_paths.yaml", "template": "templates/extra_model_paths.yaml" },
+            { "type": "write_file", "name": "生成启动脚本", "to": "start_comfyui.bat", "template": "templates/start_comfyui.bat", "crlf": true }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "models",
+      "name": "模型（按需勾选）",
+      "components": [
+        {
+          "id": "model_int8",
+          "name": "主模型 · int8 convrot（8GB 显存推荐）",
+          "desc": "6.2GB · ModelScope Comfy-Org/z_image_turbo",
+          "size_mb": 6201,
+          "preset": "8gb",
+          "check": { "all": [{ "type": "file", "path": "models/diffusion_models/z_image_turbo_int8_convrot.safetensors", "min_size": 6100000000 }] },
+          "steps": [
+            { "type": "download", "files": [{ "url": "ms:Comfy-Org/z_image_turbo/split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors", "to": "models/diffusion_models/z_image_turbo_int8_convrot.safetensors", "size": 6201001296 }] }
+          ]
+        },
+        {
+          "id": "model_bf16",
+          "name": "主模型 · 全精度 bf16",
+          "desc": "12.3GB · 画质上限略高但更慢更吃显存",
+          "size_mb": 12310,
+          "preset": "full",
+          "check": { "all": [{ "type": "file", "path": "models/diffusion_models/z_image_turbo_bf16.safetensors", "min_size": 12000000000 }] },
+          "steps": [
+            { "type": "download", "files": [{ "url": "ms:Comfy-Org/z_image_turbo/split_files/diffusion_models/z_image_turbo_bf16.safetensors", "to": "models/diffusion_models/z_image_turbo_bf16.safetensors", "size": 12309866400 }] }
+          ]
+        },
+        {
+          "id": "te_fp8",
+          "name": "文本编码器 · fp8_mixed",
+          "desc": "5.6GB · 与 int8 主模型搭配",
+          "size_mb": 5632,
+          "preset": "8gb",
+          "check": { "all": [{ "type": "file", "path": "models/text_encoders/qwen_3_4b_fp8_mixed.safetensors", "min_size": 5500000000 }] },
+          "steps": [
+            { "type": "download", "files": [{ "url": "ms:Comfy-Org/z_image_turbo/split_files/text_encoders/qwen_3_4b_fp8_mixed.safetensors", "to": "models/text_encoders/qwen_3_4b_fp8_mixed.safetensors", "size": 5631994051 }] }
+          ]
+        },
+        {
+          "id": "te_full",
+          "name": "文本编码器 · 全精度",
+          "desc": "8.0GB · 与 bf16 主模型搭配",
+          "size_mb": 8045,
+          "preset": "full",
+          "check": { "all": [{ "type": "file", "path": "models/text_encoders/qwen_3_4b.safetensors", "min_size": 7900000000 }] },
+          "steps": [
+            { "type": "download", "files": [{ "url": "ms:Comfy-Org/z_image_turbo/split_files/text_encoders/qwen_3_4b.safetensors", "to": "models/text_encoders/qwen_3_4b.safetensors", "size": 8044982048 }] }
+          ]
+        },
+        {
+          "id": "vae",
+          "name": "VAE (ae.safetensors)",
+          "desc": "335MB · 两套模型共用",
+          "size_mb": 335,
+          "preset": "both",
+          "check": { "all": [{ "type": "file", "path": "models/vae/ae.safetensors", "min_size": 300000000 }] },
+          "steps": [
+            { "type": "download", "files": [{ "url": "ms:Comfy-Org/z_image_turbo/split_files/vae/ae.safetensors", "to": "models/vae/ae.safetensors", "size": 335304388 }] }
+          ]
+        },
+        {
+          "id": "controlnet",
+          "name": "ControlNet-Union（姿势控制）",
+          "desc": "3.1GB · 姿势/边缘/深度等控制，支持 Canny/HED/Depth",
+          "size_mb": 3102,
+          "preset": "both",
+          "check": { "all": [{ "type": "file", "path": "models/model_patches/Z-Image-Turbo-Fun-Controlnet-Union.safetensors", "min_size": 3000000000 }] },
+          "steps": [
+            { "type": "download", "files": [{ "url": "ms:PAI/Z-Image-Turbo-Fun-Controlnet-Union/Z-Image-Turbo-Fun-Controlnet-Union.safetensors", "to": "models/model_patches/Z-Image-Turbo-Fun-Controlnet-Union.safetensors", "size": 3101572408 }] }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workflows",
+      "name": "工作流",
+      "components": [
+        {
+          "id": "workflows",
+          "name": "预置工作流（5 个）",
+          "desc": "文生图 / 姿势控制 / 局部重绘 / 一致性，同时复制到 ComfyUI 界面工作流面板",
+          "size_mb": 1,
+          "required": true,
+          "check": { "all": [{ "type": "dir_files", "path": "workflows", "suffix": ".json", "min_count": 5 }] },
+          "steps": [
+            { "type": "copy_resource", "from": "workflows", "to": "workflows" },
+            { "type": "copy_resource", "from": "workflows", "to": "ComfyUI/user/default/workflows" },
+            { "type": "mkdir", "path": "models/loras" },
+            { "type": "mkdir", "path": "models/checkpoints" },
+            { "type": "mkdir", "path": "models/controlnet" },
+            { "type": "mkdir", "path": "models/clip_vision" },
+            { "type": "mkdir", "path": "models/upscale_models" },
+            { "type": "mkdir", "path": "outputs/training" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "training",
+      "name": "LoRA 训练环境（可选，人物一致性用）",
+      "components": [
+        {
+          "id": "aitk_env",
+          "name": "ai-toolkit 训练环境",
+          "desc": "约 6GB 下载（含 PyTorch）。含 8GB 显存必需的 3 处兼容补丁，自动应用",
+          "size_mb": 6300,
+          "optional": true,
+          "check": {
+            "all": [
+              { "type": "file", "path": "ai-toolkit/run.py" },
+              { "type": "file", "path": "ai-toolkit/.venv/Scripts/python.exe" },
+              { "type": "file", "path": "external/diffusers/src/diffusers/__init__.py" }
+            ]
+          },
+          "steps": [
+            { "type": "download", "files": [{ "url": "gh:ostris/ai-toolkit/archive/refs/heads/main.zip", "to": "downloads/ai-toolkit-main.zip", "size": 12000000 }] },
+            { "type": "unzip", "from": "downloads/ai-toolkit-main.zip", "to": "ai-toolkit", "strip_first": true },
+            { "type": "cmd", "name": "创建 Python 3.12 环境", "exe": "tools/uv/uv.exe", "args": ["venv", "--python", "3.12", "--python-preference", "only-managed", "ai-toolkit/.venv"], "env": { "UV_PYTHON_INSTALL_DIR": "{{ROOT}}/uv-python", "UV_PYTHON_INSTALL_MIRROR": "https://gh-proxy.com/https://github.com/astral-sh/python-build-standalone/releases/download", "UV_DEFAULT_INDEX": "https://pypi.tuna.tsinghua.edu.cn/simple" }, "timeout_secs": 900 },
+            { "type": "download", "files": [{ "url": "gh:huggingface/diffusers/archive/c943837899b16cbae2f619b8dd4f7bb6f07dd81a.zip", "to": "downloads/diffusers-c9438378.zip", "size": 18000000 }] },
+            { "type": "unzip", "from": "downloads/diffusers-c9438378.zip", "to": "external/diffusers", "strip_first": true },
+            { "type": "cmd", "name": "安装 ai-toolkit 基础依赖（含 PyTorch，较久）", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ai-toolkit/.venv/Scripts/python.exe", "-r", "ai-toolkit/requirements_base.txt"], "env": { "UV_DEFAULT_INDEX": "https://pypi.tuna.tsinghua.edu.cn/simple" }, "timeout_secs": 3600 },
+            { "type": "cmd", "name": "安装 ai-toolkit 附加依赖", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ai-toolkit/.venv/Scripts/python.exe", "-r", "ai-toolkit/requirements.txt"], "env": { "UV_DEFAULT_INDEX": "https://pypi.tuna.tsinghua.edu.cn/simple" }, "timeout_secs": 3600 },
+            { "type": "cmd", "name": "锁定 PyTorch 2.13.0+cu130（官方验证组合）", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ai-toolkit/.venv/Scripts/python.exe", "torch==2.13.0", "torchvision==0.28.0", "torchaudio==2.11.0", "--index-url", "https://download.pytorch.org/whl/cu130", "--extra-index-url", "https://pypi.tuna.tsinghua.edu.cn/simple"], "timeout_secs": 3600 },
+            { "type": "cmd", "name": "安装本地版 diffusers", "exe": "tools/uv/uv.exe", "args": ["pip", "install", "--python", "ai-toolkit/.venv/Scripts/python.exe", "--no-deps", "external/diffusers"], "timeout_secs": 900 },
+            { "type": "apply_patch", "name": "应用 8GB 兼容补丁 (1/3)：逐项容错搬运", "resource": "aitk/patched/BaseSDTrainProcess.py", "to": "ai-toolkit/jobs/process/BaseSDTrainProcess.py", "marker": "cannot kill the run" },
+            { "type": "apply_patch", "name": "应用 8GB 兼容补丁 (2/3)：dtype 对齐", "resource": "aitk/patched/manager_modules.py", "to": "ai-toolkit/toolkit/memory_management/manager_modules.py", "marker": "align staged weight dtype with the incoming activations" },
+            { "type": "apply_patch", "name": "应用 8GB 兼容补丁 (3/3)：禁用假 OOM 开关", "resource": "aitk/patched/z_image.py", "to": "ai-toolkit/toolkit/models/v2/diffusion_models/z_image.py", "marker": "keep disabled" },
+            { "type": "mkdir", "path": "ai-toolkit/datasets/character" },
+            { "type": "mkdir", "path": "outputs/training" },
+            { "type": "write_file", "name": "写入训练配置", "to": "ai-toolkit/config/zimage_character_8gb.yml", "template": "aitk/zimage_character_8gb.yml" },
+            { "type": "write_file", "name": "生成训练脚本", "to": "train_zimage.bat", "template": "templates/train_zimage.bat", "crlf": true }
+          ]
+        },
+        {
+          "id": "aitk_models",
+          "name": "训练用模型组件",
+          "desc": "8.9GB · 去蒸馏适配器 v2 + diffusers 格式组件（text_encoder/vae/tokenizer）。需要同时安装主模型 int8",
+          "size_mb": 8900,
+          "optional": true,
+          "check": {
+            "all": [
+              { "type": "file", "path": "models/training/zimage_turbo_training_adapter_v2.safetensors", "min_size": 300000000 },
+              { "type": "file", "path": "models/training/z-image-turbo-diffusers/text_encoder/model-00003-of-00003.safetensors", "min_size": 90000000 }
+            ]
+          },
+          "steps": [
+            { "type": "download", "files": [
+              { "url": "ms:ostris/zimage_turbo_training_adapter/zimage_turbo_training_adapter_v2.safetensors", "to": "models/training/zimage_turbo_training_adapter_v2.safetensors", "size": 340194488 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/text_encoder/model-00001-of-00003.safetensors", "to": "models/training/z-image-turbo-diffusers/text_encoder/model-00001-of-00003.safetensors", "size": 3957900840 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/text_encoder/model-00002-of-00003.safetensors", "to": "models/training/z-image-turbo-diffusers/text_encoder/model-00002-of-00003.safetensors", "size": 3987450520 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/text_encoder/model-00003-of-00003.safetensors", "to": "models/training/z-image-turbo-diffusers/text_encoder/model-00003-of-00003.safetensors", "size": 99630640 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/text_encoder/model.safetensors.index.json", "to": "models/training/z-image-turbo-diffusers/text_encoder/model.safetensors.index.json", "size": 32819 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/text_encoder/config.json", "to": "models/training/z-image-turbo-diffusers/text_encoder/config.json", "size": 726 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/text_encoder/generation_config.json", "to": "models/training/z-image-turbo-diffusers/text_encoder/generation_config.json", "size": 239 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/vae/diffusion_pytorch_model.safetensors", "to": "models/training/z-image-turbo-diffusers/vae/diffusion_pytorch_model.safetensors", "size": 167666902 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/vae/config.json", "to": "models/training/z-image-turbo-diffusers/vae/config.json", "size": 805 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/transformer/config.json", "to": "models/training/z-image-turbo-diffusers/transformer/config.json", "size": 473 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/tokenizer/merges.txt", "to": "models/training/z-image-turbo-diffusers/tokenizer/merges.txt", "size": 1671853 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/tokenizer/tokenizer.json", "to": "models/training/z-image-turbo-diffusers/tokenizer/tokenizer.json", "size": 11422654 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/tokenizer/tokenizer_config.json", "to": "models/training/z-image-turbo-diffusers/tokenizer/tokenizer_config.json", "size": 9732 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/tokenizer/vocab.json", "to": "models/training/z-image-turbo-diffusers/tokenizer/vocab.json", "size": 2776833 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/model_index.json", "to": "models/training/z-image-turbo-diffusers/model_index.json", "size": 467 },
+              { "url": "ms:Tongyi-MAI/Z-Image-Turbo/scheduler/scheduler_config.json", "to": "models/training/z-image-turbo-diffusers/scheduler/scheduler_config.json", "size": 173 }
+            ] }
+          ]
+        }
+      ]
+    }
+  ]
+}

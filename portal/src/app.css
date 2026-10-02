@@ -1,0 +1,141 @@
+/* ============================================================
+   Z-Image Studio 门户 · 全局样式
+   视觉语言延续应用本体：ComfyUI charcoal 色板 + azure 强调色。
+   ============================================================ */
+
+@font-face {
+	font-family: 'Inter';
+	src: url('fonts/inter-latin-normal.woff2') format('woff2');
+	font-weight: 100 900;
+	font-style: normal;
+	font-display: swap;
+}
+
+:root {
+	/* 层次：页面底色比应用再深一档，让窗口截图浮起来 */
+	--ink: #17181a;
+	--panel: #1e1f22;
+	--panel-2: #26272a;
+	/* 细线与强线：与应用同一套 ComfyUI 边框灰 */
+	--line: #313235;
+	--line-strong: #4e4e4e;
+	--text: #f2f2f3;
+	--dim: #c0c1c5;
+	--muted: #86868c;
+	--azure: #0b8ce9;
+	--azure-hi: #31b9f4;
+	--ok: #00d294;
+	--radius: 10px;
+}
+
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html {
+	scroll-behavior: smooth;
+}
+
+html,
+body {
+	background: var(--ink);
+}
+
+body {
+	font-family:
+		'Inter',
+		'PingFang SC',
+		'Microsoft YaHei UI',
+		'Microsoft YaHei',
+		system-ui,
+		sans-serif;
+	color: var(--text);
+	font-size: 15.5px;
+	line-height: 1.75;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3 {
+	line-height: 1.2;
+	letter-spacing: -0.015em;
+	font-weight: 750;
+}
+
+a {
+	color: inherit;
+	text-decoration: none;
+}
+
+img {
+	display: block;
+	max-width: 100%;
+}
+
+::selection {
+	background: rgba(11, 140, 233, 0.35);
+}
+
+:focus-visible {
+	outline: 2px solid var(--azure-hi);
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.wrap {
+	max-width: 1120px;
+	margin: 0 auto;
+	padding: 0 24px;
+}
+
+/* 按钮（Motion 负责按压微交互） */
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	border: 1px solid var(--line-strong);
+	background: var(--panel-2);
+	color: var(--dim);
+	border-radius: 8px;
+	padding: 11px 22px;
+	font-size: 14.5px;
+	font-family: inherit;
+	font-weight: 550;
+	cursor: pointer;
+	transition:
+		background 0.15s,
+		border-color 0.15s,
+		color 0.15s;
+}
+.btn:hover {
+	background: #3c3d42;
+	border-color: #56565e;
+	color: var(--text);
+}
+.btn-primary {
+	background: var(--azure);
+	border-color: transparent;
+	color: #fff;
+	font-weight: 650;
+}
+.btn-primary:hover {
+	background: var(--azure-hi);
+	border-color: transparent;
+	color: #fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html {
+		scroll-behavior: auto;
+	}
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		transition-duration: 0.01ms !important;
+	}
+}

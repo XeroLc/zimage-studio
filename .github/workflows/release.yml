@@ -1,0 +1,84 @@
+name: Release (build + sign + publish)
+
+# 打 tag 即发布：例如  git tag v0.2.0 && git push origin v0.2.0
+# 产物：NSIS 安装程序 / MSI / 更新包（.nsis.zip + .sig），并生成 latest.json。
+# latest.json 会被改写成 gh-proxy 前缀（国内可用）后提交回 main —— 应用内置的
+# 更新检查端点读取的就是 main 分支上的它。
+#
+# 一次性配置（GitHub 仓库 → Settings → Secrets and variables → Actions）：
+#   TAURI_SIGNING_PRIVATE_KEY          = .keys/zimage-studio.key 文件内容（整段文本）
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD = .keys/password.txt 里的密码
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Z-Image Studio ${{ github.ref_name }}'
+          releaseBody: |
+            下载 `*-setup.exe`（NSIS 简体中文安装程序）或 `*-zh-CN.msi` 安装。
+
+            已安装旧版本的用户：应用会在启动后自动检查此发布页并一键更新。
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          updaterJsonPreferNsis: true
+
+      - name: Rewrite latest.json with gh-proxy URLs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ github.ref_name }}" -p latest.json -O latest.json --clobber
+          node -e "
+            const fs = require('fs');
+            const j = JSON.parse(fs.readFileSync('latest.json', 'utf8'));
+            for (const p of Object.values(j.platforms)) {
+              p.url = p.url.replace('https://github.com/', 'https://gh-proxy.com/https://github.com/');
+            }
+            fs.writeFileSync('latest.json', JSON.stringify(j, null, 2));
+          "
+          cat latest.json
+
+      - name: Commit latest.json to main branch
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA=$(gh api "repos/${{ github.repository }}/contents/latest.json" --jq .sha 2>/dev/null || true)
+          ARGS=(-f message="chore: update latest.json for ${{ github.ref_name }}" -f branch=main -f content="$(base64 -w0 latest.json)")
+          if [ -n "$SHA" ]; then ARGS+=(-f sha="$SHA"); fi
+          gh api "repos/${{ github.repository }}/contents/latest.json" -X PUT "${ARGS[@]}"

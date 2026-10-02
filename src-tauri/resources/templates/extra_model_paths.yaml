@@ -1,0 +1,13 @@
+# Z-Image Studio 自动生成：让 ComfyUI 使用数据目录下的共享模型库
+comfyui:
+    base_path: {{ROOT}}/
+    checkpoints: models/checkpoints
+    diffusion_models: models/diffusion_models
+    text_encoders: models/text_encoders
+    vae: models/vae
+    loras: models/loras
+    controlnet: models/controlnet
+    model_patches: models/model_patches
+    clip_vision: models/clip_vision
+    embeddings: models/embeddings
+    upscale_models: models/upscale_models
