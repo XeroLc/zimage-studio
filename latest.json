@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "notes": "下载 `*-setup.exe`（NSIS 简体中文安装程序）或 `*-zh-CN.msi` 安装。\n\n已安装旧版本的用户：应用会在启动后自动检查此发布页并一键更新。",
+  "pub_date": "2026-10-02T11:41:19.333Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS0VvTld1R3JuZjUwVm03R1BJYitBWHJVT0dSS0g3MU1RZWtPaEhXd2FDdnFlWlJIMGtmbnFZeEhiZkladFhWd2FCLzlFM1dhSHJsaG9RbEorNlYrWVFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTQxMjc0CWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4wCmp0WHZTZVJyNDFlcGxYd2RHbmxvMkltZ25VTnFMdm4zYWREKzBGT2djNmdCSDllekZrUjZqSnhsYVdjQkNEeGhkdHkzeENZQjhobmNCdjFYQVVnRURBPT0K",
+      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.0/Z-Image.Studio_0.2.0_x64-setup.exe"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS0VvTld1R3JuZjUwVm03R1BJYitBWHJVT0dSS0g3MU1RZWtPaEhXd2FDdnFlWlJIMGtmbnFZeEhiZkladFhWd2FCLzlFM1dhSHJsaG9RbEorNlYrWVFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTQxMjc0CWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjBfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi4wCmp0WHZTZVJyNDFlcGxYd2RHbmxvMkltZ25VTnFMdm4zYWREKzBGT2djNmdCSDllekZrUjZqSnhsYVdjQkNEeGhkdHkzeENZQjhobmNCdjFYQVVnRURBPT0K",
+      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.0/Z-Image.Studio_0.2.0_x64-setup.exe"
+    },
+    "windows-x86_64-msi": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS0pwcTBYMkxHUHZxMFZaTGY2dm1SUjJpR2FwcXM1eWpqNUtCckU4M09VN21BZXBaZzFsV201MXN6STFmNzRNeW8rclJzUEZ3TyttV21qcWx0U0U2V3dFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTQxMjc0CWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjBfeDY0X3poLUNOLm1zaQl2ZXJzaW9uOjAuMi4wCm92Q29EMDhHOXllbzU1VEoyV2IrZU5ubUJ6UDkvUjBBZ0xTU1BGY0k3QVh5bGFPMUNUQWtwcnZ4VkcyWStraHc3YUZGMmN5VmJVS01VeUdsMHJlbEJnPT0K",
+      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.0/Z-Image.Studio_0.2.0_x64_zh-CN.msi"
+    }
+  }
+}
