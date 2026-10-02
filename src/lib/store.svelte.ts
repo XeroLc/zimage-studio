@@ -277,6 +277,12 @@ class StudioStore {
         await listen<string>('app://notice', (ev) => this.toast(ev.payload))
       );
       this.#unlisten.push(
+        // 启动自动同步（或后台同步）完成后刷新资源中心
+        await listen('setup://manifest-synced', () => {
+          if (this.setup) void this.refreshSetup(false);
+        })
+      );
+      this.#unlisten.push(
         await listen<import('./api').UpdateProgress>('update://progress', (ev) => {
           const p = ev.payload;
           if (p.phase === 'download') {

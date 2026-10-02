@@ -219,20 +219,24 @@ fn bundled_manifest_path(resource_dir: &Path) -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
-pub fn load_manifest(resource_dir: &Path) -> Result<Manifest, String> {
-    // 已同步（GitHub）副本优先；损坏则回退内置
+/// 载入清单：已同步副本仅在其 version >= 内置版本时才优先
+/// （防止早期同步的旧副本永久盖住随安装包更新的新清单）
+pub fn load_manifest(resource_dir: &Path) -> Result<(Manifest, &'static str), String> {
     let synced = synced_manifest_path();
-    if synced.exists() {
-        if let Ok(text) = fs::read_to_string(&synced) {
-            if let Ok(m) = serde_json::from_str::<Manifest>(&text) {
-                return Ok(m);
-            }
-        }
-    }
-    let path = bundled_manifest_path(resource_dir)
+    let synced_parsed = fs::read_to_string(&synced)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Manifest>(&t).ok());
+
+    let bundled = bundled_manifest_path(resource_dir)
         .ok_or_else(|| "找不到资源清单 setup-manifest.json".to_string())?;
-    let text = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| format!("资源清单解析失败: {e}"))
+    let bundled_text = fs::read_to_string(&bundled).map_err(|e| e.to_string())?;
+    let bundled_parsed: Manifest =
+        serde_json::from_str(&bundled_text).map_err(|e| format!("资源清单解析失败: {e}"))?;
+
+    match synced_parsed {
+        Some(s) if s.version >= bundled_parsed.version => Ok((s, "synced")),
+        _ => Ok((bundled_parsed, "bundled")),
+    }
 }
 
 fn resource_path(resource_dir: &Path, rel: &str) -> Option<PathBuf> {
@@ -672,7 +676,7 @@ pub async fn test_sources(
             .unwrap_or_else(|_| PathBuf::from("."));
         (st.config.clone(), res)
     };
-    let manifest = load_manifest(&res)?;
+    let (manifest, _) = load_manifest(&res)?;
     let client = build_client();
 
     // 并发测所有通道的所有候选
@@ -770,12 +774,13 @@ pub struct SetupInfo {
 }
 
 pub fn build_setup_info(cfg: &AppConfig, resource_dir: &Path) -> SetupInfo {
-    let manifest = load_manifest(resource_dir).ok();
+    let loaded = load_manifest(resource_dir).ok();
     let root = cfg.root();
-    let (version, updated) = manifest
+    let (version, updated, source) = loaded
         .as_ref()
-        .map(|m| (m.version, m.updated.clone()))
-        .unwrap_or((0, String::new()));
+        .map(|(m, s)| (m.version, m.updated.clone(), s.to_string()))
+        .unwrap_or((0, String::new(), "bundled".into()));
+    let manifest = loaded.map(|(m, _)| m);
     let (effective, source_candidates) = match &manifest {
         Some(m) => (
             cached_choices(cfg, m),
@@ -830,11 +835,7 @@ pub fn build_setup_info(cfg: &AppConfig, resource_dir: &Path) -> SetupInfo {
         suggested_root: crate::config::suggest_data_root(),
         manifest_version: version,
         manifest_updated: updated,
-        manifest_source: if synced_manifest_path().exists() {
-            "synced".into()
-        } else {
-            "bundled".into()
-        },
+        manifest_source: source,
         manifest_url: cfg.manifest_url.clone(),
         groups,
         effective,
@@ -914,7 +915,7 @@ async fn install_inner(
         .root()
         .ok_or_else(|| "尚未设置数据目录".to_string())?;
     fs::create_dir_all(&root).map_err(|e| format!("无法创建数据目录: {e}"))?;
-    let manifest = load_manifest(resource_dir)?;
+    let (manifest, _) = load_manifest(resource_dir)?;
     let client = build_client();
 
     // 解析下载源（auto 通道在此刻测速优选；结果缓存 24h）
@@ -1553,7 +1554,7 @@ pub fn get_quickgen_template(app: AppHandle) -> Result<String, String> {
 
 // ---------------- manifest sync (GitHub) ----------------
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct ManifestSyncResult {
     pub version: u32,
     pub updated: String,
@@ -1562,8 +1563,49 @@ pub struct ManifestSyncResult {
     pub source: String,
 }
 
-/// 从配置的 GitHub 地址拉取最新资源清单并落盘（此后优先生效）。
-/// 组件增删、下载源调整、模型版本更新都不需要发新版本应用。
+/// 抓取远端清单（附加时间戳 + no-cache：绕过 CDN 缓存；校验基本结构）
+async fn fetch_manifest(url: &str) -> Result<(Manifest, String), String> {
+    let client = build_client();
+    let sep = if url.contains('?') { '&' } else { '?' };
+    let full = format!("{url}{sep}t={}", now_ts());
+    let resp = client
+        .get(&full)
+        .header("Cache-Control", "no-cache")
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| format!("拉取清单失败: {e}"))?;
+    if !resp.status().is_success() {
+        return Err(format!("拉取清单失败：服务器返回 {}", resp.status()));
+    }
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let manifest: Manifest = serde_json::from_str(&text)
+        .map_err(|e| format!("清单格式无效（拒绝覆盖本地副本）: {e}"))?;
+    if manifest.groups.is_empty() {
+        return Err("清单内容为空（拒绝覆盖本地副本）".into());
+    }
+    Ok((manifest, text))
+}
+
+fn manifest_summary(manifest: &Manifest, url: &str) -> ManifestSyncResult {
+    ManifestSyncResult {
+        version: manifest.version,
+        updated: manifest.updated.clone(),
+        groups: manifest.groups.len(),
+        components: manifest.groups.iter().map(|g| g.components.len()).sum(),
+        source: url.to_string(),
+    }
+}
+
+fn write_synced_manifest(text: &str) -> Result<(), String> {
+    let path = synced_manifest_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&path, text).map_err(|e| format!("写入同步副本失败: {e}"))
+}
+
+/// 手动同步（资源中心按钮）
 #[tauri::command]
 pub async fn sync_manifest(
     state: tauri::State<'_, Mutex<crate::AppState>>,
@@ -1575,31 +1617,25 @@ pub async fn sync_manifest(
     if url.trim().is_empty() {
         return Err("未配置清单同步地址".into());
     }
-    let client = build_client();
-    let resp = client
-        .get(&url)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .map_err(|e| format!("拉取清单失败: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("拉取清单失败：服务器返回 {}", resp.status()));
+    let (manifest, text) = fetch_manifest(&url).await?;
+    write_synced_manifest(&text)?;
+    Ok(manifest_summary(&manifest, &url))
+}
+
+/// 启动时后台自动同步（静默；内容有变化才写入并通知界面）
+pub async fn auto_sync_manifest(app: AppHandle, url: String) {
+    if url.trim().is_empty() {
+        return;
     }
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    let manifest: Manifest = serde_json::from_str(&text)
-        .map_err(|e| format!("清单格式无效（拒绝覆盖本地副本）: {e}"))?;
-    let groups = manifest.groups.len();
-    let components = manifest.groups.iter().map(|g| g.components.len()).sum();
-    let path = synced_manifest_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let Ok((manifest, text)) = fetch_manifest(&url).await else {
+        return;
+    };
+    // 全文比对（不看版本号——同版本号也可能改了内容）
+    let current_raw = fs::read_to_string(synced_manifest_path()).unwrap_or_default();
+    if current_raw.trim() == text.trim() {
+        return;
     }
-    fs::write(&path, &text).map_err(|e| format!("写入同步副本失败: {e}"))?;
-    Ok(ManifestSyncResult {
-        version: manifest.version,
-        updated: manifest.updated,
-        groups,
-        components,
-        source: url,
-    })
+    if write_synced_manifest(&text).is_ok() {
+        let _ = app.emit("setup://manifest-synced", manifest_summary(&manifest, &url));
+    }
 }

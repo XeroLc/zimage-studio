@@ -52,6 +52,8 @@ pub struct AppConfig {
     /// 资源清单同步地址（GitHub 仓库里的 setup-manifest.json；
     /// 默认经 gh-proxy 走国内可用的 raw 地址。改仓库时只改这里）
     pub manifest_url: String,
+    /// 启动时自动同步资源清单（带时间戳绕 CDN 缓存；失败静默保留本地）
+    pub manifest_auto_sync: bool,
     /// 分通道下载源选择（见 SourcesCfg）
     pub sources: SourcesCfg,
     /// 保留旧字段以兼容旧配置文件（新版不再使用）
@@ -74,6 +76,7 @@ impl Default for AppConfig {
             embed_support: true,
             manifest_url:
                 "https://gh-proxy.com/https://raw.githubusercontent.com/XeroLc/zimage-studio/main/src-tauri/resources/setup-manifest.json".into(),
+            manifest_auto_sync: true,
             sources: SourcesCfg::default(),
             open_browser: false,
         }

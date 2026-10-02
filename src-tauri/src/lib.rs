@@ -143,6 +143,21 @@ pub fn run() {
             }
             tray.build(app)?;
 
+            // 启动后台自动同步资源清单（带时间戳绕过 CDN 缓存；静默失败）
+            {
+                let st = app.state::<Mutex<AppState>>();
+                let (url, auto) = {
+                    let s = st.lock().unwrap();
+                    (s.config.manifest_url.clone(), s.config.manifest_auto_sync)
+                };
+                if auto && !url.trim().is_empty() {
+                    let handle = app.handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        setup::auto_sync_manifest(handle, url).await;
+                    });
+                }
+            }
+
             Ok(())
         })
         .on_window_event(|window, event| {
