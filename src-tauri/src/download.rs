@@ -5,42 +5,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-/// 资源 URL 前缀解析：
-///   ms:<repo>/<path>   → ModelScope（自动用 /resolve/master/ 直链，支持断点续传）
-///   hf:<repo>/<path>   → hf-mirror.net
-///   gh:<owner>/<repo>/...  → GitHub（经 gh-proxy.com 加速）
-///   url:<完整地址>      → 原样
-pub fn resolve_url(spec: &str) -> String {
-    if let Some(rest) = spec.strip_prefix("ms:") {
-        // ms:Owner/Repo/path/to/file → https://www.modelscope.cn/models/Owner/Repo/resolve/master/path/to/file
-        let mut it = rest.splitn(3, '/');
-        let owner = it.next().unwrap_or("");
-        let repo = it.next().unwrap_or("");
-        let path = it.next().unwrap_or("");
-        format!(
-            "https://www.modelscope.cn/models/{}/{}/resolve/master/{}",
-            owner, repo, path
-        )
-    } else if let Some(rest) = spec.strip_prefix("hf:") {
-        let (repo, path) = split_repo_path(rest);
-        format!("https://hf-mirror.net/{}/resolve/main/{}", repo, path)
-    } else if let Some(rest) = spec.strip_prefix("gh:") {
-        format!("https://gh-proxy.com/https://github.com/{}", rest)
-    } else if let Some(rest) = spec.strip_prefix("url:") {
-        rest.to_string()
-    } else {
-        spec.to_string()
-    }
-}
-
-fn split_repo_path(rest: &str) -> (String, String) {
-    let mut it = rest.splitn(3, '/');
-    let owner = it.next().unwrap_or("");
-    let repo = it.next().unwrap_or("");
-    let path = it.next().unwrap_or("");
-    (format!("{}/{}", owner, repo), path.to_string())
-}
-
 pub fn build_client() -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent("Z-Image-Studio/0.2 (+local)")

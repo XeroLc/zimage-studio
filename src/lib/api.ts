@@ -1,5 +1,16 @@
 import { invoke } from '@tauri-apps/api/core';
 
+export interface SourcesCfg {
+  /** auto | modelscope | hfm */
+  models: string;
+  /** auto | proxy | direct */
+  github: string;
+  /** auto | tsinghua | aliyun | official */
+  pypi: string;
+  /** auto | official | sjtu | aliyun */
+  torch: string;
+}
+
 export interface AppConfig {
   data_root: string;
   comfy_dir: string;
@@ -13,6 +24,7 @@ export interface AppConfig {
   auto_enter: boolean;
   embed_support: boolean;
   manifest_url: string;
+  sources: SourcesCfg;
   open_browser: boolean;
 }
 
@@ -63,6 +75,36 @@ export interface GroupInfo {
   components: ComponentInfo[];
 }
 
+export interface ChannelChoice {
+  channel: string;
+  id: string;
+  name: string;
+  latency_ms: number;
+  detail: string;
+  auto: boolean;
+}
+
+export interface ChannelCandidates {
+  channel: string;
+  name: string;
+  candidates: { id: string; name: string }[];
+}
+
+export interface SourceTestRow {
+  channel: string;
+  id: string;
+  name: string;
+  ok: boolean;
+  latency_ms: number;
+  speed_kbps: number;
+}
+
+export interface SourceTestResult {
+  rows: SourceTestRow[];
+  chosen: ChannelChoice[];
+  tested_at: number;
+}
+
 export interface SetupInfo {
   data_root: string;
   suggested_root: string;
@@ -71,6 +113,9 @@ export interface SetupInfo {
   manifest_source: 'bundled' | 'synced';
   manifest_url: string;
   groups: GroupInfo[];
+  effective: ChannelChoice[];
+  source_test_at: number;
+  source_candidates: ChannelCandidates[];
 }
 
 export interface ManifestSyncResult {
@@ -160,5 +205,6 @@ export const api = {
   startInstall: (ids: string[]) => invoke<void>('start_install', { ids }),
   cancelInstall: () => invoke<void>('cancel_install'),
   quickgenTemplate: () => invoke<string>('get_quickgen_template'),
-  syncManifest: () => invoke<ManifestSyncResult>('sync_manifest')
+  syncManifest: () => invoke<ManifestSyncResult>('sync_manifest'),
+  testSources: () => invoke<SourceTestResult>('test_sources')
 };

@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
-use crate::download::{build_client, download_file, file_ready, resolve_url, DownloadEvent};
+use crate::download::{build_client, download_file, file_ready, DownloadEvent};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -25,7 +26,37 @@ pub struct Manifest {
     pub updated: String,
     #[serde(default)]
     pub note: String,
+    #[serde(default)]
+    pub sources: ManifestSources,
     pub groups: Vec<Group>,
+}
+
+/// 各通道候选下载源（数据驱动：改清单即可增删源）
+#[derive(Deserialize, Clone, Default)]
+pub struct ManifestSources {
+    #[serde(default)]
+    pub models: Vec<SourceCandidate>,
+    #[serde(default)]
+    pub github: Vec<SourceCandidate>,
+    #[serde(default)]
+    pub pypi: Vec<SourceCandidate>,
+    #[serde(default)]
+    pub torch: Vec<SourceCandidate>,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct SourceCandidate {
+    pub id: String,
+    pub name: String,
+    /// 测速用的小文件地址
+    #[serde(default)]
+    pub probe: String,
+    /// pypi / torch 通道：index 基址
+    #[serde(default)]
+    pub index: String,
+    /// github 通道：URL 前缀
+    #[serde(default)]
+    pub prefix: String,
 }
 
 #[derive(Deserialize, Clone)]
@@ -120,6 +151,9 @@ pub struct DownloadFile {
     pub to: String,
     #[serde(default)]
     pub size: u64,
+    /// 备用源（当前源失败时切换；auto 模式下也参与优选）
+    #[serde(default)]
+    pub alt: Option<String>,
 }
 
 // ---------------- install state ----------------
@@ -264,6 +298,372 @@ pub fn component_installed(root: &Path, comp: &Component) -> bool {
     }
 }
 
+// ---------------- download sources（分通道下载源：手动指定 / 自动测速优选） ----------------
+
+#[derive(Serialize, Clone, Default)]
+pub struct ChannelChoice {
+    pub channel: String,
+    pub id: String,
+    pub name: String,
+    pub latency_ms: u64,
+    pub detail: String,
+    pub auto: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct ChannelCandidatesOut {
+    pub channel: String,
+    pub name: String,
+    pub candidates: Vec<CandidateOut>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct CandidateOut {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SourceTestRow {
+    pub channel: String,
+    pub id: String,
+    pub name: String,
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub speed_kbps: f64,
+}
+
+#[derive(Serialize, Clone)]
+pub struct SourceTestResult {
+    pub rows: Vec<SourceTestRow>,
+    pub chosen: Vec<ChannelChoice>,
+    pub tested_at: i64,
+}
+
+pub struct EffectiveSources {
+    pub channels: Vec<ChannelChoice>,
+    pub github_prefix: String,
+    pub pypi_index: String,
+    pub torch_index: String,
+    pub models_id: String,
+    /// 模型通道为 auto 时允许下载失败后自动切换备用源
+    pub allow_model_fallback: bool,
+}
+
+fn source_cache_path() -> PathBuf {
+    crate::config::app_data_dir().join("sources.json")
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct SourceCache {
+    #[serde(default)]
+    tested_at: i64,
+    #[serde(default)]
+    channels: HashMap<String, String>,
+}
+
+const SOURCE_CACHE_TTL_SECS: i64 = 24 * 3600;
+pub const SOURCE_CHANNELS: [&str; 4] = ["models", "github", "pypi", "torch"];
+
+fn load_source_cache() -> SourceCache {
+    fs::read_to_string(source_cache_path())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_source_cache(cache: &SourceCache) {
+    if let Ok(text) = serde_json::to_string_pretty(cache) {
+        let _ = fs::write(source_cache_path(), text);
+    }
+}
+
+fn pub_cache_tested_at() -> i64 {
+    load_source_cache().tested_at
+}
+
+fn now_ts() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn candidates_for<'a>(m: &'a ManifestSources, channel: &str) -> &'a [SourceCandidate] {
+    match channel {
+        "models" => &m.models,
+        "github" => &m.github,
+        "pypi" => &m.pypi,
+        "torch" => &m.torch,
+        _ => &[],
+    }
+}
+
+fn configured_id<'a>(cfg: &'a AppConfig, channel: &str) -> &'a str {
+    match channel {
+        "models" => &cfg.sources.models,
+        "github" => &cfg.sources.github,
+        "pypi" => &cfg.sources.pypi,
+        "torch" => &cfg.sources.torch,
+        _ => "auto",
+    }
+}
+
+/// 用小文件测速：返回 (首字节延迟 ms, 吞吐 KB/s)
+async fn probe_candidate(client: &reqwest::Client, cand: &SourceCandidate) -> Option<(u64, f64)> {
+    if cand.probe.is_empty() {
+        return None;
+    }
+    let t0 = Instant::now();
+    let resp = client
+        .get(&cand.probe)
+        .header("Range", "bytes=0-131071")
+        .timeout(Duration::from_secs(8))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let latency = t0.elapsed().as_millis() as u64;
+    let t1 = Instant::now();
+    let mut got: u64 = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        match chunk {
+            Ok(c) => {
+                got += c.len() as u64;
+                if got >= 131072 {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    let secs = t1.elapsed().as_secs_f64().max(0.001);
+    Some((latency, got as f64 / 1024.0 / secs))
+}
+
+/// 解析各通道的生效源：手动指定直接用；auto 用缓存（24h）或并发测速选最快。
+pub async fn resolve_sources(
+    client: &reqwest::Client,
+    cfg: &AppConfig,
+    manifest: &Manifest,
+    force: bool,
+) -> EffectiveSources {
+    let mut cache = load_source_cache();
+    let stale = force || (now_ts() - cache.tested_at > SOURCE_CACHE_TTL_SECS);
+    let mut channels: Vec<ChannelChoice> = Vec::new();
+
+    for channel in SOURCE_CHANNELS {
+        let cands = candidates_for(&manifest.sources, channel);
+        if cands.is_empty() {
+            continue;
+        }
+        let wanted = configured_id(cfg, channel);
+        let auto = wanted == "auto";
+        let mut chosen: Option<&SourceCandidate> = None;
+        let mut latency = 0u64;
+        let mut detail = if auto { "测速优选".to_string() } else { "手动指定".to_string() };
+
+        if auto {
+            if !stale {
+                if let Some(id) = cache.channels.get(channel) {
+                    if let Some(c) = cands.iter().find(|x| &x.id == id) {
+                        chosen = Some(c);
+                        detail = "测速优选（缓存）".into();
+                    }
+                }
+            }
+            if chosen.is_none() {
+                let probes: Vec<_> = cands.iter().map(|c| probe_candidate(client, c)).collect();
+                let results = futures_util::future::join_all(probes).await;
+                let mut best: Option<(usize, u64)> = None;
+                for (i, r) in results.iter().enumerate() {
+                    if let Some((lat, _)) = r {
+                        if best.map(|(_, bl)| *lat < bl).unwrap_or(true) {
+                            best = Some((i, *lat));
+                        }
+                    }
+                }
+                if let Some((i, lat)) = best {
+                    chosen = Some(&cands[i]);
+                    latency = lat;
+                    cache.channels.insert(channel.to_string(), cands[i].id.clone());
+                    cache.tested_at = now_ts();
+                } else {
+                    chosen = cands.first();
+                    detail = "所有源不可达，用默认".into();
+                }
+            }
+        } else {
+            chosen = cands.iter().find(|x| x.id == wanted);
+            if chosen.is_none() {
+                chosen = cands.first();
+                detail = "指定源不存在，已回退".into();
+            }
+        }
+
+        if let Some(c) = chosen {
+            channels.push(ChannelChoice {
+                channel: channel.to_string(),
+                id: c.id.clone(),
+                name: c.name.clone(),
+                latency_ms: latency,
+                detail,
+                auto,
+            });
+        }
+    }
+    save_source_cache(&cache);
+
+    let find_cand = |ch: &str| -> Option<&SourceCandidate> {
+        let c = channels.iter().find(|x| x.channel == ch)?;
+        candidates_for(&manifest.sources, ch).iter().find(|x| x.id == c.id)
+    };
+    let github_prefix = find_cand("github")
+        .map(|c| c.prefix.clone())
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "https://gh-proxy.com/https://github.com/".into());
+    let pypi_index = find_cand("pypi")
+        .map(|c| c.index.clone())
+        .filter(|i| !i.is_empty())
+        .unwrap_or_else(|| "https://pypi.tuna.tsinghua.edu.cn/simple".into());
+    let torch_index = find_cand("torch")
+        .map(|c| c.index.clone())
+        .filter(|i| !i.is_empty())
+        .unwrap_or_else(|| "https://download.pytorch.org/whl/cu130".into());
+    let models_id = channels
+        .iter()
+        .find(|c| c.channel == "models")
+        .map(|c| c.id.clone())
+        .unwrap_or_else(|| "modelscope".into());
+
+    EffectiveSources {
+        allow_model_fallback: cfg.sources.models == "auto",
+        channels,
+        github_prefix,
+        pypi_index,
+        torch_index,
+        models_id,
+    }
+}
+
+/// 只读缓存（不测速），用于界面显示当前生效源
+pub fn cached_choices(cfg: &AppConfig, manifest: &Manifest) -> Vec<ChannelChoice> {
+    let cache = load_source_cache();
+    let mut out = Vec::new();
+    for channel in SOURCE_CHANNELS {
+        let cands = candidates_for(&manifest.sources, channel);
+        if cands.is_empty() {
+            continue;
+        }
+        let wanted = configured_id(cfg, channel);
+        let auto = wanted == "auto";
+        let id = if auto {
+            cache
+                .channels
+                .get(channel)
+                .cloned()
+                .unwrap_or_else(|| cands.first().map(|c| c.id.clone()).unwrap_or_default())
+        } else {
+            wanted.to_string()
+        };
+        let name = cands
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.name.clone())
+            .unwrap_or_else(|| id.clone());
+        out.push(ChannelChoice {
+            channel: channel.to_string(),
+            id,
+            name,
+            latency_ms: 0,
+            detail: if auto {
+                if cache.tested_at > 0 { "测速优选（缓存）".into() } else { "自动（安装时测速）".into() }
+            } else {
+                "手动指定".into()
+            },
+            auto,
+        });
+    }
+    out
+}
+
+/// 对全部候选源做一次测速（并发），写入缓存并返回明细
+#[tauri::command]
+pub async fn test_sources(
+    app: AppHandle,
+    state: tauri::State<'_, Mutex<crate::AppState>>,
+) -> Result<SourceTestResult, String> {
+    let (cfg, res) = {
+        let st = state.lock().unwrap();
+        let res = app
+            .path()
+            .resource_dir()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        (st.config.clone(), res)
+    };
+    let manifest = load_manifest(&res)?;
+    let client = build_client();
+
+    // 并发测所有通道的所有候选
+    let mut jobs = Vec::new();
+    for channel in SOURCE_CHANNELS {
+        for cand in candidates_for(&manifest.sources, channel) {
+            jobs.push((channel, cand.clone()));
+        }
+    }
+    let probes = jobs
+        .iter()
+        .map(|(_, c)| probe_candidate(&client, c));
+    let results = futures_util::future::join_all(probes).await;
+
+    let mut rows = Vec::new();
+    let mut best_by_channel: HashMap<String, (String, u64)> = HashMap::new();
+    for ((channel, cand), r) in jobs.iter().zip(results.iter()) {
+        let (ok, lat, kbps) = match r {
+            Some((lat, kbps)) => (true, *lat, *kbps),
+            None => (false, 0, 0.0),
+        };
+        rows.push(SourceTestRow {
+            channel: channel.to_string(),
+            id: cand.id.clone(),
+            name: cand.name.clone(),
+            ok,
+            latency_ms: lat,
+            speed_kbps: kbps,
+        });
+        if ok {
+            let e = best_by_channel
+                .entry(channel.to_string())
+                .or_insert((cand.id.clone(), lat));
+            if lat < e.1 {
+                *e = (cand.id.clone(), lat);
+            }
+        }
+    }
+
+    // 更新缓存（只对 auto 通道生效）
+    let mut cache = load_source_cache();
+    for channel in SOURCE_CHANNELS {
+        if configured_id(&cfg, channel) == "auto" {
+            if let Some((id, _)) = best_by_channel.get(channel) {
+                cache.channels.insert(channel.to_string(), id.clone());
+            }
+        }
+    }
+    cache.tested_at = now_ts();
+    save_source_cache(&cache);
+
+    let chosen = cached_choices(&cfg, &manifest);
+    Ok(SourceTestResult {
+        rows,
+        chosen,
+        tested_at: cache.tested_at,
+    })
+}
+
 #[derive(Serialize, Clone)]
 pub struct ComponentInfo {
     pub id: String,
@@ -293,6 +693,12 @@ pub struct SetupInfo {
     pub manifest_source: String,
     pub manifest_url: String,
     pub groups: Vec<GroupInfo>,
+    /// 当前生效的下载源（来自缓存，不触发测速）
+    pub effective: Vec<ChannelChoice>,
+    /// 上次测速时间（unix 秒，0=从未）
+    pub source_test_at: i64,
+    /// 各通道候选源（界面下拉用）
+    pub source_candidates: Vec<ChannelCandidatesOut>,
 }
 
 pub fn build_setup_info(cfg: &AppConfig, resource_dir: &Path) -> SetupInfo {
@@ -302,6 +708,32 @@ pub fn build_setup_info(cfg: &AppConfig, resource_dir: &Path) -> SetupInfo {
         .as_ref()
         .map(|m| (m.version, m.updated.clone()))
         .unwrap_or((0, String::new()));
+    let (effective, source_candidates) = match &manifest {
+        Some(m) => (
+            cached_choices(cfg, m),
+            SOURCE_CHANNELS
+                .iter()
+                .filter(|ch| !candidates_for(&m.sources, ch).is_empty())
+                .map(|ch| ChannelCandidatesOut {
+                    channel: ch.to_string(),
+                    name: match *ch {
+                        "models" => "模型".into(),
+                        "github" => "GitHub".into(),
+                        "pypi" => "PyPI".into(),
+                        _ => "PyTorch".into(),
+                    },
+                    candidates: candidates_for(&m.sources, ch)
+                        .iter()
+                        .map(|c| CandidateOut {
+                            id: c.id.clone(),
+                            name: c.name.clone(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        ),
+        None => (Vec::new(), Vec::new()),
+    };
     let groups: Vec<GroupInfo> = manifest
         .map(|m| {
             m.groups
@@ -337,6 +769,9 @@ pub fn build_setup_info(cfg: &AppConfig, resource_dir: &Path) -> SetupInfo {
         },
         manifest_url: cfg.manifest_url.clone(),
         groups,
+        effective,
+        source_test_at: pub_cache_tested_at(),
+        source_candidates,
     }
 }
 
@@ -413,6 +848,32 @@ async fn install_inner(
     let manifest = load_manifest(resource_dir)?;
     let client = build_client();
 
+    // 解析下载源（auto 通道在此刻测速优选；结果缓存 24h）
+    {
+        let mut s = ctl.snap.lock().unwrap();
+        s.phase = "prepare".into();
+        s.message = "正在选择下载源…".into();
+    }
+    publish(app, ctl);
+    let eff = resolve_sources(&client, cfg, &manifest, false).await;
+    let summary = eff
+        .channels
+        .iter()
+        .map(|c| {
+            if c.latency_ms > 0 {
+                format!("{}={}({}ms)", c.channel, c.name, c.latency_ms)
+            } else {
+                format!("{}={}", c.channel, c.name)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" · ");
+    {
+        let mut s = ctl.snap.lock().unwrap();
+        s.message = format!("下载源：{summary}");
+    }
+    publish(app, ctl);
+
     for group in &manifest.groups {
         for comp in &group.components {
             if !ids.iter().any(|i| i == &comp.id) {
@@ -440,7 +901,7 @@ async fn install_inner(
                 if ctl.cancel.load(Ordering::Relaxed) {
                     return Err("已取消".into());
                 }
-                run_step(app, ctl, &client, &root, resource_dir, step).await?;
+                run_step(app, ctl, &client, &root, resource_dir, step, &eff).await?;
             }
             let mut s = ctl.snap.lock().unwrap();
             if !s.done.contains(&comp.id) {
@@ -460,6 +921,7 @@ async fn run_step(
     root: &Path,
     resource_dir: &Path,
     step: &Step,
+    eff: &EffectiveSources,
 ) -> Result<(), String> {
     let label = step
         .name
@@ -490,31 +952,60 @@ async fn run_step(
                     s.speed = 0.0;
                 }
                 publish(app, ctl);
-                let url = resolve_url(&f.url);
-                let start = Instant::now();
-                let mut last_bytes = 0u64;
-                let ctl2 = Arc::clone(ctl);
-                let app2 = app.clone();
-                let fsize = f.size;
-                download_file(client, &url, &dest, fsize, &ctl.cancel, move |ev: DownloadEvent| {
-                    let mut s = ctl2.snap.lock().unwrap();
-                    s.downloaded = ev.downloaded;
-                    if ev.total > 0 {
-                        s.total = ev.total;
+
+                let urls = candidate_urls(f, eff);
+                let mut last_err = String::new();
+                let mut ok = false;
+                for (attempt, url) in urls.iter().enumerate() {
+                    if attempt > 0 {
+                        set_phase(
+                            ctl,
+                            "download",
+                            &format!("主源失败，切换备用源（{}）…", short_name(&f.to)),
+                        );
+                        publish(app, ctl);
                     }
-                    let secs = start.elapsed().as_secs_f64();
-                    if secs > 0.5 {
-                        s.speed = (ev.downloaded.saturating_sub(last_bytes)) as f64
-                            / start.elapsed().as_secs_f64();
+                    let start = Instant::now();
+                    let ctl2 = Arc::clone(ctl);
+                    let app2 = app.clone();
+                    let fsize = f.size;
+                    let result = download_file(client, url, &dest, fsize, &ctl.cancel, move |ev: DownloadEvent| {
+                        let mut s = ctl2.snap.lock().unwrap();
+                        s.downloaded = ev.downloaded;
+                        if ev.total > 0 {
+                            s.total = ev.total;
+                        }
+                        let secs = start.elapsed().as_secs_f64();
+                        if secs > 0.5 {
+                            s.speed = ev.downloaded as f64 / secs;
+                        }
+                        let snap = s.clone();
+                        drop(s);
+                        let _ = app2.emit("setup://progress", snap);
+                        true
+                    })
+                    .await;
+                    match result {
+                        Ok(_) => {
+                            ok = true;
+                            break;
+                        }
+                        Err(e) => {
+                            if ctl.cancel.load(Ordering::Relaxed) {
+                                return Err("已取消".into());
+                            }
+                            last_err = e;
+                        }
                     }
-                    last_bytes = 0;
-                    let snap = s.clone();
-                    drop(s);
-                    let _ = app2.emit("setup://progress", snap);
-                    true
-                })
-                .await
-                .map_err(|e| format!("下载 {} 失败: {e}", short_name(&f.to)))?;
+                }
+                if !ok {
+                    return Err(format!(
+                        "下载 {} 失败（已尝试 {} 个源）：{}",
+                        short_name(&f.to),
+                        urls.len(),
+                        last_err
+                    ));
+                }
             }
             Ok(())
         }
@@ -531,7 +1022,7 @@ async fn run_step(
             let root2 = root.to_path_buf();
             set_phase(ctl, "step", &format!("执行：{}", label));
             publish(app, ctl);
-            run_command(app, ctl, &step2, &root2)
+            run_command(app, ctl, &step2, &root2, eff)
         }
         "write_file" => {
             let to = root.join(step.to.clone().unwrap_or_default());
@@ -542,7 +1033,7 @@ async fn run_step(
             } else {
                 step.content.clone().unwrap_or_default()
             };
-            let content = substitute_root(&content, root);
+            let content = subst(&content, root, eff);
             let content = if step.crlf.unwrap_or(false) {
                 content.replace("\r\n", "\n").replace('\n', "\r\n")
             } else {
@@ -598,9 +1089,70 @@ fn short_name(p: &str) -> String {
     p.rsplit('/').next().unwrap_or(p).to_string()
 }
 
-fn substitute_root(s: &str, root: &Path) -> String {
+/// 变量替换：{{ROOT}} / {{PYPI_INDEX}} / {{TORCH_INDEX}} / {{PYTHON_MIRROR}}（由生效源决定）
+fn subst(s: &str, root: &Path, eff: &EffectiveSources) -> String {
     let r = root.to_string_lossy().replace('\\', "/");
     s.replace("{{ROOT}}", &r)
+        .replace("{{PYPI_INDEX}}", &eff.pypi_index)
+        .replace("{{TORCH_INDEX}}", &eff.torch_index)
+        .replace(
+            "{{PYTHON_MIRROR}}",
+            &format!(
+                "{}astral-sh/python-build-standalone/releases/download",
+                eff.github_prefix
+            ),
+        )
+}
+
+/// 资源 URL 前缀解析（gh: 走当前 GitHub 通道前缀）
+fn resolve_url(spec: &str, eff: &EffectiveSources) -> String {
+    if let Some(rest) = spec.strip_prefix("ms:") {
+        let mut it = rest.splitn(3, '/');
+        let owner = it.next().unwrap_or("");
+        let repo = it.next().unwrap_or("");
+        let path = it.next().unwrap_or("");
+        format!(
+            "https://www.modelscope.cn/models/{}/{}/resolve/master/{}",
+            owner, repo, path
+        )
+    } else if let Some(rest) = spec.strip_prefix("hf:") {
+        let (repo, path) = split_repo_path(rest);
+        format!("https://hf-mirror.net/{}/resolve/main/{}", repo, path)
+    } else if let Some(rest) = spec.strip_prefix("gh:") {
+        format!("{}{}", eff.github_prefix, rest)
+    } else if let Some(rest) = spec.strip_prefix("url:") {
+        rest.to_string()
+    } else {
+        spec.to_string()
+    }
+}
+
+fn split_repo_path(rest: &str) -> (String, String) {
+    let mut it = rest.splitn(3, '/');
+    let owner = it.next().unwrap_or("");
+    let repo = it.next().unwrap_or("");
+    let path = it.next().unwrap_or("");
+    (format!("{}/{}", owner, repo), path.to_string())
+}
+
+/// 单个文件的可尝试 URL 列表：
+/// - auto 模式：主源优先（模型通道选了 HF-Mirror 时备用源提前），失败可切换
+/// - 手动指定：只用首选源（忠实用户选择）
+fn candidate_urls(f: &DownloadFile, eff: &EffectiveSources) -> Vec<String> {
+    let primary = resolve_url(&f.url, eff);
+    let mut list = vec![primary.clone()];
+    if let Some(alt) = &f.alt {
+        let alt_url = resolve_url(alt, eff);
+        if eff.models_id == "hfm" && f.url.starts_with("ms:") {
+            list = vec![alt_url.clone(), primary];
+        } else {
+            list.push(alt_url);
+        }
+    }
+    if !eff.allow_model_fallback {
+        list.truncate(1);
+    }
+    list
 }
 
 fn unzip_into(zip_path: &Path, out_dir: &Path, strip_first: bool) -> Result<(), String> {
@@ -641,6 +1193,7 @@ fn run_command(
     ctl: &Arc<InstallCtl>,
     step: &Step,
     root: &Path,
+    eff: &EffectiveSources,
 ) -> Result<(), String> {
     let exe_raw = step.exe.clone().unwrap_or_default();
     let exe = {
@@ -663,13 +1216,13 @@ fn run_command(
     let mut cmd = Command::new(&exe);
     if let Some(args) = &step.args {
         for a in args {
-            cmd.arg(substitute_root(a, root));
+            cmd.arg(subst(a, root, eff));
         }
     }
     cmd.current_dir(root);
     if let Some(env) = &step.env {
         for (k, v) in env {
-            cmd.env(k, substitute_root(v, root));
+            cmd.env(k, subst(v, root, eff));
         }
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());

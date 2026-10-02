@@ -21,7 +21,7 @@
 	const features = [
 		{
 			title: '资源中心，一键配齐',
-			body: 'ComfyUI 引擎、CUDA 版 PyTorch、全部模型与工作流按需勾选，从 ModelScope 断点续传。清单从 GitHub 仓库同步——新增模型、调整下载源都不用更新应用。'
+			body: 'ComfyUI 引擎、CUDA 版 PyTorch、全部模型与工作流按需勾选，从 ModelScope / HF-Mirror 断点续传；下载源可手动指定或自动测速优选。清单从 GitHub 仓库同步——新增模型、调整下载源都不用更新应用。'
 		},
 		{
 			title: '程序内的工作区',

@@ -63,6 +63,41 @@
 	}
 
 	const install = $derived(store.install);
+
+	// 下载源通道元信息（名称 + 候选列表，来自清单）
+	const channelsMeta = $derived(store.setup?.source_candidates ?? []);
+
+	type SourceKey = 'models' | 'github' | 'pypi' | 'torch';
+
+	function sourceValue(channel: string): string {
+		return store.config.sources[channel as SourceKey] ?? 'auto';
+	}
+
+	function onSourceChange(channel: string, value: string) {
+		void store.setSource(channel as SourceKey, value);
+	}
+
+	// 当前生效源摘要行
+	const effectiveLine = $derived.by(() => {
+		const eff = store.setup?.effective ?? [];
+		if (!eff.length) return '';
+		const parts = eff.map((c) => `${chanLabel(c.channel)} ${c.name}`).join(' · ');
+		const at = store.setup?.source_test_at ?? 0;
+		if (at > 0) {
+			const d = new Date(at * 1000);
+			const p = (n: number) => String(n).padStart(2, '0');
+			return `现行：${parts}（测速于 ${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}）`;
+		}
+		return `现行：${parts}`;
+	});
+
+	function chanLabel(channel: string): string {
+		return channelsMeta.find((c) => c.channel === channel)?.name ?? channel;
+	}
+
+	function rowsFor(channel: string) {
+		return (store.sourceTest.rows ?? []).filter((r) => r.channel === channel);
+	}
 </script>
 
 <div class="view scroll" transition:viewIn>
@@ -73,10 +108,11 @@
 				一键 / 按需把整套生图与训练环境安装到数据目录 —— 换电脑装好客户端后，在这里勾选即可快速配置
 			</div>
 
-			<div class="field">
-				<label for="sRoot">数据目录</label>
+			<!-- ① 数据目录 -->
+			<div class="head-section">
+				<div class="head-label">数据目录</div>
 				<div class="dirline">
-					<code id="sRoot">{store.config.data_root || '（未设置）'}</code>
+					<code>{store.config.data_root || '（未设置）'}</code>
 					<button class="btn btn-sm" onclick={pickRoot} use:pressable disabled={install.running}>
 						选择…
 					</button>
@@ -95,22 +131,81 @@
 				{/if}
 			</div>
 
-			<div class="setup-actions">
-				<span class="preset-label">快速套餐：</span>
-				<button class="btn btn-sm" onclick={() => store.selectPreset('8gb')} use:pressable
-					>8GB 显存（int8）</button
-				>
-				<button class="btn btn-sm" onclick={() => store.selectPreset('full')} use:pressable
-					>全精度</button
-				>
-				<span class="spacer"></span>
-				<span class="hint" style="margin:0"
-					>清单{store.setup?.manifest_source === 'synced' ? '已同步' : '内置'} v{store.setup
-						?.manifest_version ?? '—'} · {store.setup?.manifest_updated ?? ''}</span
-				>
-				<button class="btn btn-sm" onclick={syncNow} use:pressable disabled={syncing}
-					>{syncing ? '同步中…' : '同步清单'}</button
-				>
+			<!-- ② 下载源 -->
+			<div class="head-section">
+				<div class="head-label">
+					下载源
+					<span class="head-label-hint">自动 = 测速优选最快线路；主源失败自动切换备用源</span>
+				</div>
+				<div class="src-grid">
+					{#each channelsMeta as ch (ch.channel)}
+						<div class="src-item">
+							<label for="src-{ch.channel}">{ch.name}</label>
+							<select
+								id="src-{ch.channel}"
+								value={sourceValue(ch.channel)}
+								onchange={(e) => onSourceChange(ch.channel, e.currentTarget.value)}
+								disabled={install.running || store.sourceTest.running}
+							>
+								<option value="auto">自动（测速优选）</option>
+								{#each ch.candidates as c (c.id)}
+									<option value={c.id}>{c.name}</option>
+								{/each}
+							</select>
+						</div>
+					{/each}
+				</div>
+				<div class="src-status">
+					<button
+						class="btn btn-sm"
+						onclick={() => store.testSources()}
+						use:pressable
+						disabled={store.sourceTest.running || install.running}
+					>
+						{store.sourceTest.running ? '测速中…' : '测速并优选'}
+					</button>
+					<span class="src-effective">{effectiveLine}</span>
+				</div>
+				{#if store.sourceTest.rows}
+					<div class="src-rows">
+						{#each channelsMeta as ch (ch.channel)}
+							<div class="src-row">
+								<span class="src-row-name">{ch.name}</span>
+								{#each rowsFor(ch.channel) as r (r.id)}
+									<span class="src-chip" class:bad={!r.ok}>
+										{r.name}{#if r.ok}
+											· {r.latency_ms}ms · {(r.speed_kbps / 1024).toFixed(1)}MB/s
+										{:else}
+											· 不可达
+										{/if}
+									</span>
+								{/each}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+
+			<!-- ③ 快速开始 -->
+			<div class="head-section">
+				<div class="head-label">快速开始</div>
+				<div class="setup-actions">
+					<span class="preset-label">套餐：</span>
+					<button class="btn btn-sm" onclick={() => store.selectPreset('8gb')} use:pressable
+						>8GB 显存（int8）</button
+					>
+					<button class="btn btn-sm" onclick={() => store.selectPreset('full')} use:pressable
+						>全精度</button
+					>
+					<span class="spacer"></span>
+					<span class="hint" style="margin:0"
+						>清单{store.setup?.manifest_source === 'synced' ? '已同步' : '内置'} v{store.setup
+							?.manifest_version ?? '—'} · {store.setup?.manifest_updated ?? ''}</span
+					>
+					<button class="btn btn-sm" onclick={syncNow} use:pressable disabled={syncing}
+						>{syncing ? '同步中…' : '同步清单'}</button
+					>
+				</div>
 			</div>
 		</div>
 
@@ -226,7 +321,6 @@
 		gap: 8px;
 		row-gap: 10px;
 		flex-wrap: wrap;
-		margin-top: 4px;
 	}
 	.preset-label {
 		font-size: 12px;
@@ -235,6 +329,89 @@
 	}
 	.setup-actions .hint {
 		white-space: nowrap;
+	}
+	/* 头部三段式布局：数据目录 / 下载源 / 快速开始 */
+	.head-section {
+		padding: 14px 0 4px;
+		border-top: 1px solid var(--border-subtle);
+		margin-top: 14px;
+	}
+	.head-label {
+		font-size: 12.5px;
+		font-weight: 600;
+		color: var(--fg-dim);
+		margin-bottom: 10px;
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+	}
+	.head-label-hint {
+		font-size: 11px;
+		font-weight: 400;
+		color: var(--fg-muted);
+	}
+	.src-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: 10px 14px;
+	}
+	.src-item {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.src-item label {
+		font-size: 12px;
+		color: var(--fg-dim);
+		width: 52px;
+		flex: none;
+		text-align: right;
+	}
+	.src-item select {
+		flex: 1;
+		min-width: 0;
+	}
+	.src-status {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		margin-top: 10px;
+		flex-wrap: wrap;
+	}
+	.src-effective {
+		font-size: 11.5px;
+		color: var(--fg-muted);
+	}
+	.src-rows {
+		margin-top: 8px;
+		display: flex;
+		flex-direction: column;
+		gap: 5px;
+	}
+	.src-row {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		flex-wrap: wrap;
+	}
+	.src-row-name {
+		font-size: 11px;
+		color: var(--fg-muted);
+		width: 52px;
+		flex: none;
+		text-align: right;
+	}
+	.src-chip {
+		font-size: 11px;
+		color: #52d9a8;
+		border: 1px solid #2f6f57;
+		border-radius: 999px;
+		padding: 1px 8px;
+		white-space: nowrap;
+	}
+	.src-chip.bad {
+		color: #ff9a94;
+		border-color: #8a373a;
 	}
 	.group-card {
 		margin-top: 14px;

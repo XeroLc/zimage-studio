@@ -30,6 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   embed_support: true,
   manifest_url:
     'https://gh-proxy.com/https://raw.githubusercontent.com/XeroLc/zimage-studio/main/src-tauri/resources/setup-manifest.json',
+  sources: { models: 'auto', github: 'auto', pypi: 'auto', torch: 'auto' },
   open_browser: false
 };
 
@@ -157,6 +158,13 @@ class StudioStore {
   setup = $state<SetupInfo | null>(null);
   selected = $state<Record<string, boolean>>({});
   install = $state<InstallSnapshot>({ ...DEFAULT_INSTALL });
+
+  /** 下载源测速状态 */
+  sourceTest = $state<{
+    running: boolean;
+    rows: import('./api').SourceTestRow[] | null;
+    error: string;
+  }>({ running: false, rows: null, error: '' });
 
   // ---------------- gallery (workspace) ----------------
   outputs = $state<OutputItem[]>([]);
@@ -569,6 +577,33 @@ class StudioStore {
       await api.cancelInstall();
     } catch {
       /* ignore */
+    }
+  }
+
+  /** 设置某通道下载源（'auto' 或候选 id）并保存 */
+  async setSource(channel: keyof AppConfig['sources'], value: string) {
+    this.config.sources = { ...this.config.sources, [channel]: value };
+    await this.save();
+    await this.refreshSetup(false);
+  }
+
+  /** 全通道测速并优选 */
+  async testSources() {
+    if (this.sourceTest.running) return;
+    this.sourceTest = { running: true, rows: this.sourceTest.rows, error: '' };
+    try {
+      const r = await api.testSources();
+      this.sourceTest = { running: false, rows: r.rows, error: '' };
+      await this.refreshSetup(false);
+      const okCount = r.rows.filter((x) => x.ok).length;
+      this.toast(`测速完成：${okCount}/${r.rows.length} 个源可用，已自动优选`);
+    } catch (e) {
+      this.sourceTest = {
+        running: false,
+        rows: this.sourceTest.rows,
+        error: String((e as Error)?.message ?? e)
+      };
+      this.toast('测速失败：' + this.sourceTest.error, 5000);
     }
   }
 

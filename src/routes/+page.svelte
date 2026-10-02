@@ -14,9 +14,18 @@
 	onMount(() => {
 		store.init();
 		store.poll();
-		const timer = setInterval(() => store.poll(), 1000);
+		// 2s 轮询，且窗口隐藏（托盘/后台）时暂停，避免无谓唤醒与刷新
+		const tick = () => {
+			if (!document.hidden) store.poll();
+		};
+		const timer = setInterval(tick, 2000);
+		const onVis = () => {
+			if (!document.hidden) store.poll();
+		};
+		document.addEventListener('visibilitychange', onVis);
 		return () => {
 			clearInterval(timer);
+			document.removeEventListener('visibilitychange', onVis);
 			store.destroy();
 		};
 	});

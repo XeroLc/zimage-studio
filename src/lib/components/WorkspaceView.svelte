@@ -125,7 +125,7 @@
 		grid-template-rows: var(--topbar-h) 1fr;
 		background: var(--bg-color);
 		border: 1px solid var(--border-subtle);
-		border-radius: 10px;
+		border-radius: 8px;
 		overflow: hidden;
 	}
 	.ws-topbar {

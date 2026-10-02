@@ -29,6 +29,28 @@ fn show_main(app: &tauri::AppHandle) {
     }
 }
 
+/// 无边框窗口启用 Win11 原生圆角（不透明窗口的硬件合成路径，比透明窗口流畅）
+#[cfg(windows)]
+fn apply_round_corners(window: &tauri::WebviewWindow) {
+    use std::ffi::c_void;
+    #[link(name = "dwmapi")]
+    unsafe extern "system" {
+        fn DwmSetWindowAttribute(
+            hwnd: *mut c_void,
+            attr: u32,
+            value: *const c_void,
+            size: u32,
+        ) -> i32;
+    }
+    if let Ok(h) = window.hwnd() {
+        let hwnd = h.0 as isize as *mut c_void;
+        let pref: u32 = 2; // DWMWCP_ROUND
+        unsafe {
+            DwmSetWindowAttribute(hwnd, 33, &pref as *const u32 as *const c_void, 4);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let (cfg, cpath) = load_or_migrate();
@@ -65,6 +87,12 @@ pub fn run() {
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            }
+
+            // Win11 原生圆角（配合不透明窗口，保证硬件合成性能）
+            #[cfg(windows)]
+            if let Some(win) = app.get_webview_window("main") {
+                apply_round_corners(&win);
             }
 
             // ---------- 系统托盘 ----------
@@ -157,6 +185,7 @@ pub fn run() {
             setup::cancel_install,
             setup::get_quickgen_template,
             setup::sync_manifest,
+            setup::test_sources,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

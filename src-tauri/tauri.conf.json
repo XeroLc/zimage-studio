@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Z-Image Studio",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "identifier": "com.zimage.studio",
   "build": {
     "frontendDist": "../build",
@@ -21,8 +21,7 @@
         "resizable": true,
         "fullscreen": false,
         "decorations": false,
-        "transparent": true,
-        "shadow": false,
+        "transparent": false,
         "center": true
       }
     ],

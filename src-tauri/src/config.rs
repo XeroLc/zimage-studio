@@ -2,6 +2,31 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// 下载源选择（分通道）。每个通道 "auto" = 测速优选（失败自动切换备用）。
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct SourcesCfg {
+    /// auto | modelscope | hfm
+    pub models: String,
+    /// auto | proxy | direct
+    pub github: String,
+    /// auto | tsinghua | aliyun | official
+    pub pypi: String,
+    /// auto | official | sjtu | aliyun
+    pub torch: String,
+}
+
+impl Default for SourcesCfg {
+    fn default() -> Self {
+        Self {
+            models: "auto".into(),
+            github: "auto".into(),
+            pypi: "auto".into(),
+            torch: "auto".into(),
+        }
+    }
+}
+
 /// 应用配置。除旧字段外新增数据目录 / 打开方式等字段，
 /// 读取旧配置时新字段自动取默认值（serde(default)）。
 #[derive(Serialize, Deserialize, Clone)]
@@ -27,6 +52,8 @@ pub struct AppConfig {
     /// 资源清单同步地址（GitHub 仓库里的 setup-manifest.json；
     /// 默认经 gh-proxy 走国内可用的 raw 地址。改仓库时只改这里）
     pub manifest_url: String,
+    /// 分通道下载源选择（见 SourcesCfg）
+    pub sources: SourcesCfg,
     /// 保留旧字段以兼容旧配置文件（新版不再使用）
     pub open_browser: bool,
 }
@@ -47,6 +74,7 @@ impl Default for AppConfig {
             embed_support: true,
             manifest_url:
                 "https://gh-proxy.com/https://raw.githubusercontent.com/XeroLc/zimage-studio/main/src-tauri/resources/setup-manifest.json".into(),
+            sources: SourcesCfg::default(),
             open_browser: false,
         }
     }
