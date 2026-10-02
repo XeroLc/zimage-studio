@@ -3,6 +3,7 @@ mod config;
 mod download;
 mod setup;
 mod train;
+mod update;
 
 use config::{load_or_migrate, AppConfig};
 use std::path::PathBuf;
@@ -186,6 +187,9 @@ pub fn run() {
             setup::get_quickgen_template,
             setup::sync_manifest,
             setup::test_sources,
+            // 更新（自研：绕缓存检查 + 签名校验 + 静默安装）
+            update::check_update_remote,
+            update::download_install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

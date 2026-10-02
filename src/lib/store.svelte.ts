@@ -1,7 +1,5 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getVersion } from '@tauri-apps/api/app';
-import { check as checkUpdate, type Update } from '@tauri-apps/plugin-updater';
-import { relaunch } from '@tauri-apps/plugin-process';
 import {
   api,
   type AppConfig,
@@ -10,7 +8,8 @@ import {
   type RunState,
   type SetupInfo,
   type InstallSnapshot,
-  type OutputItem
+  type OutputItem,
+  type RemoteUpdate
 } from './api';
 
 export type ViewName = 'config' | 'starting' | 'running';
@@ -169,10 +168,10 @@ class StudioStore {
   // ---------------- gallery (workspace) ----------------
   outputs = $state<OutputItem[]>([]);
 
-  // ---------------- 应用更新（GitHub Releases） ----------------
+  // ---------------- 应用更新（自研：GitHub Releases，绕缓存 + 签名校验） ----------------
   appVersion = $state('');
   update = $state<UpdateState>({ ...DEFAULT_UPDATE });
-  #updateObj: Update | null = null;
+  #remoteUpdate: RemoteUpdate | null = null;
   #updateChecked = false;
 
   #unlisten: UnlistenFn[] = [];
@@ -277,6 +276,21 @@ class StudioStore {
       this.#unlisten.push(
         await listen<string>('app://notice', (ev) => this.toast(ev.payload))
       );
+      this.#unlisten.push(
+        await listen<import('./api').UpdateProgress>('update://progress', (ev) => {
+          const p = ev.payload;
+          if (p.phase === 'download') {
+            this.update = {
+              ...this.update,
+              installing: true,
+              progress: p.total ? Math.min(99, Math.round((p.downloaded / p.total) * 100)) : this.update.progress
+            };
+          } else {
+            this.update = { ...this.update, installing: true };
+          }
+          if (p.message) this.toast(p.message, 2600);
+        })
+      );
     } catch {
       /* 非 Tauri 环境忽略 */
     }
@@ -295,17 +309,17 @@ class StudioStore {
     if (this.update.checking || this.update.installing) return;
     this.update = { ...this.update, checking: true, error: '' };
     try {
-      const u = await checkUpdate();
-      this.#updateObj = u;
-      if (u) {
+      const r = await api.checkUpdateRemote();
+      this.#remoteUpdate = r;
+      if (r.available) {
         this.update = {
           ...this.update,
           checking: false,
           available: true,
-          version: u.version,
-          notes: u.body ?? ''
+          version: r.version,
+          notes: r.notes
         };
-        this.toast(`发现新版本 v${u.version}（控制台里可一键更新）`, 6000);
+        this.toast(`发现新版本 v${r.version}（控制台里可一键更新）`, 6000);
       } else {
         this.update = { ...this.update, checking: false, available: false };
         if (manual) this.toast('已是最新版本');
@@ -317,32 +331,21 @@ class StudioStore {
         checking: false,
         error: String((e as Error)?.message ?? e)
       };
-      if (manual) this.toast('检查更新失败：' + this.update.error);
+      if (manual) this.toast('检查更新失败：' + this.update.error, 5000);
     }
   }
 
-  /** 下载并安装更新，完成后自动重启应用 */
+  /** 下载并启动更新安装程序（安装完成后应用自动重启） */
   async installUpdate() {
-    if (!this.#updateObj || this.update.installing) return;
+    if (!this.#remoteUpdate || this.update.installing) return;
     this.update = { ...this.update, installing: true, progress: 0, error: '' };
     try {
-      let total = 0;
-      let got = 0;
-      await this.#updateObj.downloadAndInstall((ev) => {
-        if (ev.event === 'Started') {
-          total = ev.data.contentLength ?? 0;
-        } else if (ev.event === 'Progress') {
-          got += ev.data.chunkLength;
-          this.update = {
-            ...this.update,
-            progress: total ? Math.min(99, Math.round((got / total) * 100)) : 0
-          };
-        } else if (ev.event === 'Finished') {
-          this.update = { ...this.update, progress: 100 };
-        }
-      });
-      this.toast('更新已安装，正在重启…');
-      await relaunch();
+      await api.downloadInstallUpdate(
+        this.#remoteUpdate.url,
+        this.#remoteUpdate.signature,
+        this.#remoteUpdate.version
+      );
+      // 正常情况下 Rust 侧在拉起安装程序后会退出进程，这里通常不会执行到
     } catch (e) {
       this.update = {
         ...this.update,

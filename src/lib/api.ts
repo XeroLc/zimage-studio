@@ -169,6 +169,23 @@ export interface SysStats {
   temp: number;
 }
 
+export interface RemoteUpdate {
+  available: boolean;
+  version: string;
+  notes: string;
+  url: string;
+  signature: string;
+  source: string;
+}
+
+export interface UpdateProgress {
+  phase: 'download' | 'verify' | 'launch';
+  downloaded: number;
+  total: number;
+  speed: number;
+  message: string;
+}
+
 export const api = {
   // config / status
   getConfig: () => invoke<AppConfig>('get_config'),
@@ -206,5 +223,10 @@ export const api = {
   cancelInstall: () => invoke<void>('cancel_install'),
   quickgenTemplate: () => invoke<string>('get_quickgen_template'),
   syncManifest: () => invoke<ManifestSyncResult>('sync_manifest'),
-  testSources: () => invoke<SourceTestResult>('test_sources')
+  testSources: () => invoke<SourceTestResult>('test_sources'),
+
+  // 自研更新（绕 CDN 缓存 + 签名校验；安装时应用会退出并交由安装器接管）
+  checkUpdateRemote: () => invoke<RemoteUpdate>('check_update_remote'),
+  downloadInstallUpdate: (url: string, signature: string, version: string) =>
+    invoke<void>('download_install_update', { url, signature, version })
 };
