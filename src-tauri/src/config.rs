@@ -54,6 +54,8 @@ pub struct AppConfig {
     pub manifest_url: String,
     /// 启动时自动同步资源清单（带时间戳绕 CDN 缓存；失败静默保留本地）
     pub manifest_auto_sync: bool,
+    /// 启动/安装时自动把外层 models/* 以目录链接（junction）挂进 ComfyUI/models/*
+    pub auto_link_models: bool,
     /// 分通道下载源选择（见 SourcesCfg）
     pub sources: SourcesCfg,
     /// 保留旧字段以兼容旧配置文件（新版不再使用）
@@ -77,6 +79,7 @@ impl Default for AppConfig {
             manifest_url:
                 "https://gh-proxy.com/https://raw.githubusercontent.com/XeroLc/zimage-studio/main/src-tauri/resources/setup-manifest.json".into(),
             manifest_auto_sync: true,
+            auto_link_models: true,
             sources: SourcesCfg::default(),
             open_browser: false,
         }

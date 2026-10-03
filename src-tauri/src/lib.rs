@@ -159,19 +159,31 @@ pub fn run() {
                 }
             }
 
-            // 启动兜底：ComfyUI 已存在但缺模型库挂接文件时补齐（历史中断安装的自愈）
+            // 启动兜底：把外层 models/* 链接进 ComfyUI/models（首次启动/中断安装/迁移后自愈）
             {
                 let st = app.state::<Mutex<AppState>>();
-                let root = st.lock().unwrap().config.root();
+                let (root, auto_link) = {
+                    let s = st.lock().unwrap();
+                    (s.config.root(), s.config.auto_link_models)
+                };
                 if let Some(root) = root {
                     if root.join("ComfyUI").join("main.py").exists() {
-                        if let Ok(res) = app.path().resource_dir() {
-                            match setup::ensure_extra_model_paths(&root, &res) {
-                                Ok(true) => {
-                                    let _ = app.emit("app://notice", "已补齐模型库挂接文件（extra_model_paths.yaml）");
-                                }
-                                _ => {}
+                        match setup::ensure_model_links(&root, auto_link) {
+                            Ok(r) if !r.linked.is_empty() || !r.skipped.is_empty() => {
+                                let _ = app.emit(
+                                    "app://notice",
+                                    format!(
+                                        "模型目录已挂接：{} 个类别{}",
+                                        r.linked.len(),
+                                        if r.skipped.is_empty() {
+                                            String::new()
+                                        } else {
+                                            format!("（{} 个类别保留为路径挂接）", r.skipped.len())
+                                        }
+                                    ),
+                                );
                             }
+                            _ => {}
                         }
                     }
                 }

@@ -932,23 +932,151 @@ pub async fn run_install(
     let _ = app.emit("setup://progress", snap);
 }
 
-/// 确保共享模型库挂接文件存在（缺则从模板生成）。
-/// 应用层兜底：无论用户以什么顺序/子集安装组件，模型都能被 ComfyUI 找到。
-pub fn ensure_extra_model_paths(root: &Path, resource_dir: &Path) -> Result<bool, String> {
-    let target = root.join("ComfyUI").join("extra_model_paths.yaml");
-    if target.exists() {
-        return Ok(false);
+// ---------------- 模型目录链接（把外层 models/* 挂进 ComfyUI/models/*） ----------------
+
+#[derive(Serialize, Clone, Default)]
+pub struct LinkReport {
+    pub linked: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+fn norm_path(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
+/// 目录是否只含占位文件（ComfyUI 随包附带的 put_xxx_here；兼容 .gitkeep 等隐藏文件）
+fn is_placeholder_only(dir: &Path) -> bool {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return false;
+    };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            return false;
+        }
+        let name = e.file_name().to_string_lossy().to_lowercase();
+        let placeholder = name.starts_with("put_") || name.starts_with('.');
+        if !placeholder {
+            return false;
+        }
     }
-    let tpl = resource_path(resource_dir, "templates/extra_model_paths.yaml")
-        .ok_or_else(|| "找不到模型路径模板".to_string())?;
-    let content = fs::read_to_string(&tpl).map_err(|e| e.to_string())?;
-    let r = root.to_string_lossy().replace('\\', "/");
-    let content = content.replace("{{ROOT}}", &r);
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    true
+}
+
+#[cfg(windows)]
+fn create_junction(link: &Path, target: &Path) -> Result<(), String> {
+    let mut cmd = Command::new("cmd");
+    cmd.args([
+        "/c",
+        "mklink",
+        "/J",
+        &link.to_string_lossy(),
+        &target.to_string_lossy(),
+    ]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    let out = cmd.output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
     }
-    fs::write(&target, content).map_err(|e| format!("写入 extra_model_paths.yaml 失败: {e}"))?;
-    Ok(true)
+}
+
+#[cfg(not(windows))]
+fn create_junction(_link: &Path, _target: &Path) -> Result<(), String> {
+    Err("仅支持 Windows".into())
+}
+
+/// 把数据目录下 models/* 的每个类别以目录链接挂进 ComfyUI/models/*；
+/// 链接成功的类别不再写入 extra_model_paths.yaml（避免两套机制重复发现）。
+/// enabled=false 时退化为纯 yaml 模式（旧行为）。
+pub fn link_models_core(root: &Path, enabled: bool) -> Result<LinkReport, String> {
+    let models_dir = root.join("models");
+    if !models_dir.exists() {
+        return Ok(LinkReport::default());
+    }
+    let comfy_models = root.join("ComfyUI").join("models");
+    let mut report = LinkReport::default();
+
+    let mut categories: Vec<String> = Vec::new();
+    if let Ok(rd) = fs::read_dir(&models_dir) {
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                categories.push(e.file_name().to_string_lossy().into_owned());
+            }
+        }
+    }
+    categories.sort();
+
+    for name in &categories {
+        let source = models_dir.join(name);
+        if !enabled {
+            report.skipped.push(name.clone());
+            continue;
+        }
+        let link = comfy_models.join(name);
+        // 已存在的处理
+        if let Ok(md) = fs::symlink_metadata(&link) {
+            if md.file_type().is_symlink() {
+                // 已是链接：目标一致则保留，否则重建（如数据目录迁移后）
+                let same = fs::read_link(&link)
+                    .map(|t| norm_path(&t) == norm_path(&source))
+                    .unwrap_or(false);
+                if same {
+                    report.linked.push(name.clone());
+                    continue;
+                }
+                let _ = fs::remove_dir(&link);
+            } else if md.is_dir() {
+                if is_placeholder_only(&link) {
+                    // 先删除占位文件（put_xxx_here / .gitkeep），再删空目录
+                    if let Ok(rd) = fs::read_dir(&link) {
+                        for e in rd.flatten() {
+                            let _ = fs::remove_file(e.path());
+                        }
+                    }
+                    let _ = fs::remove_dir(&link);
+                } else {
+                    // 里面有真实文件（用户放的内容）——保留，交给 yaml 挂接
+                    report.skipped.push(name.clone());
+                    continue;
+                }
+            } else {
+                report.skipped.push(name.clone());
+                continue;
+            }
+        }
+        if fs::create_dir_all(&comfy_models).is_err() {
+            report.skipped.push(name.clone());
+            continue;
+        }
+        match create_junction(&link, &source) {
+            Ok(()) => report.linked.push(name.clone()),
+            Err(_) => report.skipped.push(name.clone()),
+        }
+    }
+
+    // 生成 extra_model_paths.yaml：链接成功的类别从 yaml 中移除（互斥，防重复）
+    let yaml_path = root.join("ComfyUI").join("extra_model_paths.yaml");
+    let root_fwd = root.to_string_lossy().replace('\\', "/");
+    let mut content = String::from(
+        "# Z-Image Studio 自动生成：模型库挂接\n\
+         # 已链接进 ComfyUI/models 的类别不在此列出（通过目录链接访问）\n\
+         comfyui:\n",
+    );
+    content.push_str(&format!("    base_path: {root_fwd}/\n"));
+    for name in &report.skipped {
+        content.push_str(&format!("    {name}: models/{name}\n"));
+    }
+    if fs::create_dir_all(yaml_path.parent().unwrap_or(root)).is_ok() {
+        let _ = fs::write(&yaml_path, content);
+    }
+    Ok(report)
+}
+
+/// 启动/安装时的兜底入口（含日志化的结果）
+pub fn ensure_model_links(root: &Path, enabled: bool) -> Result<LinkReport, String> {
+    link_models_core(root, enabled)
 }
 
 async fn install_inner(
@@ -965,8 +1093,8 @@ async fn install_inner(
     let (manifest, _) = load_manifest(resource_dir)?;
     let client = build_client();
 
-    // 任何安装批次都先确保模型库挂接文件存在（先装模型后装 ComfyUI 也能正确挂接）
-    let _ = ensure_extra_model_paths(&root, resource_dir);
+    // 任何安装批次都先确保模型库就位：链接进 ComfyUI/models + 刷新挂接文件
+    let _ = ensure_model_links(&root, cfg.auto_link_models);
 
     // 解析下载源（auto 通道在此刻测速优选；结果缓存 24h）
     {
@@ -1746,5 +1874,57 @@ pub async fn auto_sync_manifest(app: AppHandle, url: String) {
     }
     if write_synced_manifest(&text).is_ok() {
         let _ = app.emit("setup://manifest-synced", manifest_summary(&manifest, &url));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 目录链接：占位目录被替换为 junction；有真实内容的目录跳过并保留在 yaml；双向断言
+    #[test]
+    fn link_models_core_junction_and_yaml() {
+        let base = std::env::temp_dir().join("zimg-link-test");
+        let _ = fs::remove_dir_all(&base);
+        let root = base.join("root");
+        // 外层模型库
+        fs::create_dir_all(root.join("models/vae")).unwrap();
+        fs::write(root.join("models/vae/ae.safetensors"), "x").unwrap();
+        fs::create_dir_all(root.join("models/checkpoints")).unwrap();
+        fs::write(root.join("models/checkpoints/m.safetensors"), "x").unwrap();
+        fs::create_dir_all(root.join("models/loras")).unwrap();
+        // ComfyUI 侧：vae 是占位目录；loras 有用户真实内容
+        fs::create_dir_all(root.join("ComfyUI/models/vae")).unwrap();
+        fs::write(root.join("ComfyUI/models/vae/put_vae_here"), "!").unwrap();
+        fs::create_dir_all(root.join("ComfyUI/models/loras")).unwrap();
+        fs::write(root.join("ComfyUI/models/loras/mine.safetensors"), "x").unwrap();
+
+        let report = link_models_core(&root, true).expect("link ok");
+        println!("linked={:?} skipped={:?}", report.linked, report.skipped);
+        assert!(report.linked.contains(&"vae".to_string()));
+        assert!(report.linked.contains(&"checkpoints".to_string()));
+        assert!(report.skipped.contains(&"loras".to_string()));
+
+        // vae 链接生效：透过 junction 能读到外层文件，且是 reparse point
+        let vae_link = root.join("ComfyUI/models/vae");
+        let md = fs::symlink_metadata(&vae_link).unwrap();
+        assert!(md.file_type().is_symlink(), "vae should be a junction");
+        assert!(vae_link.join("ae.safetensors").exists(), "through-junction read");
+        assert!(!vae_link.join("put_vae_here").exists(), "placeholder gone");
+
+        // yaml：只列 loras（互斥），base_path 正确
+        let yaml = fs::read_to_string(root.join("ComfyUI/extra_model_paths.yaml")).unwrap();
+        println!("yaml:\n{yaml}");
+        assert!(yaml.contains("loras: models/loras"));
+        assert!(!yaml.contains("vae: models/vae"));
+        assert!(!yaml.contains("checkpoints: models/checkpoints"));
+        assert!(yaml.contains("base_path:"));
+
+        // 幂等：再跑一次结果一致（链接已存在且指向正确 → 保留）
+        let r2 = link_models_core(&root, true).unwrap();
+        assert_eq!(r2.linked.len(), 2);
+        assert_eq!(r2.skipped.len(), 1);
+
+        let _ = fs::remove_dir_all(&base);
     }
 }

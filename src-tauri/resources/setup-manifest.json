@@ -1,7 +1,7 @@
 {
   "version": 3,
   "min_app": "0.2.6",
-  "updated": "2026-10-02",
+  "updated": "2026-10-03",
   "note": "Z-Image Studio 资源清单 —— 一键/按需把整套生图与训练环境配置到所选数据目录",
   "sources": {
     "models": [
@@ -244,12 +244,6 @@
                 "UV_DEFAULT_INDEX": "{{PYPI_INDEX}}"
               },
               "timeout_secs": 3600
-            },
-            {
-              "type": "write_file",
-              "name": "写入共享模型库配置",
-              "to": "ComfyUI/extra_model_paths.yaml",
-              "template": "templates/extra_model_paths.yaml"
             },
             {
               "type": "write_file",

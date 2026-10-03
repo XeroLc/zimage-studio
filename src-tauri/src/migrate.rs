@@ -169,13 +169,9 @@ pub fn migrate_core(
     }
 
     let mode;
-    let mut copied = 0u64;
-    let mut files = 0usize;
     match fs::rename(old_root, new_root) {
         Ok(()) => {
             mode = "rename".to_string();
-            copied = total_bytes;
-            files = total_files;
         }
         Err(_) => {
             // 跨盘等情况：复制 + 删除
@@ -183,7 +179,7 @@ pub fn migrate_core(
             let start = Instant::now();
             let mut last = Instant::now();
             let mut acc = 0u64;
-            files = copy_dir_recursive(old_root, new_root, &mut |n| {
+            copy_dir_recursive(old_root, new_root, &mut |n| {
                 acc += n;
                 if last.elapsed() > Duration::from_millis(200) {
                     last = Instant::now();
@@ -202,17 +198,18 @@ pub fn migrate_core(
                     });
                 }
             })?;
-            copied = acc;
             on_progress(MigrateProgress {
                 phase: "cleanup".into(),
-                copied,
+                copied: acc,
                 total: total_bytes,
-                files,
+                files: total_files,
                 message: "正在清理原目录…".into(),
             });
             fs::remove_dir_all(old_root).map_err(|e| format!("删除原目录失败: {e}"))?;
         }
     }
+    let copied = total_bytes;
+    let files = total_files;
 
     on_progress(MigrateProgress {
         phase: "rewrite".into(),
@@ -268,9 +265,10 @@ pub async fn migrate_data_root(
     };
     let target = PathBuf::from(new_root.replace('\\', "/"));
     let old_root_c = old_root.clone();
+    let target_c = target.clone();
     let app2 = app.clone();
     let report = tauri::async_runtime::spawn_blocking(move || {
-        migrate_core(&old_root_c, &target, &mut |p| {
+        migrate_core(&old_root_c, &target_c, &mut |p| {
             let _ = app2.emit("migrate://progress", p);
         })
     })
@@ -282,7 +280,10 @@ pub async fn migrate_data_root(
         let mut st = state.lock().unwrap();
         st.config.data_root = report.new_root.clone();
         let path = st.config_path.clone();
+        let auto_link = st.config.auto_link_models;
         crate::config::save_config_to(&path, &st.config.clone())?;
+        // 链接是绝对路径：迁移后重建（link_models 会自动识别失效链接并重建 + 重写 yaml）
+        let _ = crate::setup::ensure_model_links(&target, auto_link);
     }
     Ok(report)
 }

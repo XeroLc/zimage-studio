@@ -1,6 +1,6 @@
 [package]
 name = "zimage-studio"
-version = "0.2.7"
+version = "0.2.8"
 description = "Z-Image Studio - 一体化生图工作台 (ComfyUI + LoRA 训练 + 资源中心)"
 authors = ["Z-Image Studio"]
 license = ""
