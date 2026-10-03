@@ -1,19 +1,19 @@
 {
-  "version": "0.2.7",
+  "version": "0.2.8",
   "notes": "下载 `*-setup.exe`（NSIS 简体中文安装程序）或 `*-zh-CN.msi` 安装。\n\n已安装旧版本的用户：应用会在启动后自动检查此发布页并一键更新。",
-  "pub_date": "2026-10-02T18:18:03.064Z",
+  "pub_date": "2026-10-03T02:29:26.731Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS05YYWl4Um12aEtkbkZJU2N3L1dNUFl0SUxmL3lUcTNScTFJNUhqazdFY1JBZVRlTGRLV2tTT1lFWktvS1Y4UUJ2Vy9yelRRWlZUZk1MMlJ5aXFXVEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTY1MDc3CWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjdfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi43CmxpRk9BRDdMVmFGaWpxSE5KSUtrazBPQUZyMmw1RStQRjRBSHl0WlNRVXlENk1WMEY4R0hBUVpGcHJSZ2tsbWdMQ0lIS1g2ZnpENjB2ZGpqaHFDTkNnPT0K",
-      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.7/Z-Image.Studio_0.2.7_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS1BtSm5JNzJiTDZRL2ZiSzJSQjdhVWlGUGFQaG5NakFRcmhZK2lpL0g4MWxPYVduR2JlVW45TGNTTTBtUTRmbG5LaHRHS1J0bXZwSXZ4aVlNRklWa2dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTk0NTYyCWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjhfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi44CmNGODdhNjJTRElYRm9KV1gvWGdYVitvTlU1djhVTTRmOUhYRms3amNrK3dLZWROV0FJSnZzWnZLMjZXYkR0cm4xWFBzck1kclBIOUVORUNHWCtzekRRPT0K",
+      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.8/Z-Image.Studio_0.2.8_x64-setup.exe"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS05YYWl4Um12aEtkbkZJU2N3L1dNUFl0SUxmL3lUcTNScTFJNUhqazdFY1JBZVRlTGRLV2tTT1lFWktvS1Y4UUJ2Vy9yelRRWlZUZk1MMlJ5aXFXVEEwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTY1MDc3CWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjdfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi43CmxpRk9BRDdMVmFGaWpxSE5KSUtrazBPQUZyMmw1RStQRjRBSHl0WlNRVXlENk1WMEY4R0hBUVpGcHJSZ2tsbWdMQ0lIS1g2ZnpENjB2ZGpqaHFDTkNnPT0K",
-      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.7/Z-Image.Studio_0.2.7_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS1BtSm5JNzJiTDZRL2ZiSzJSQjdhVWlGUGFQaG5NakFRcmhZK2lpL0g4MWxPYVduR2JlVW45TGNTTTBtUTRmbG5LaHRHS1J0bXZwSXZ4aVlNRklWa2dnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTk0NTYyCWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjhfeDY0LXNldHVwLmV4ZQl2ZXJzaW9uOjAuMi44CmNGODdhNjJTRElYRm9KV1gvWGdYVitvTlU1djhVTTRmOUhYRms3amNrK3dLZWROV0FJSnZzWnZLMjZXYkR0cm4xWFBzck1kclBIOUVORUNHWCtzekRRPT0K",
+      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.8/Z-Image.Studio_0.2.8_x64-setup.exe"
     },
     "windows-x86_64-msi": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS05rak4wVE9EZ216dlJnZmhRWjE3M0VhNjZwVm0yUmExeEdzT1FucEJKSzBJeEtrVnVCMThSUHE2U0pRTTJ6ZDJKVFdIN2xGTXpqUWpWTzJPbk1nMnc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTY1MDc3CWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjdfeDY0X3poLUNOLm1zaQl2ZXJzaW9uOjAuMi43CmJHb2Z1cmgwaS9Sb2RVSURBbXFJYjkvUlZaMXRwbktvN3BKMXpudnJERG5Wc3ZkbEk1VU01Q01QWnhTcTJyNjFPNUJNN1Z2WWNpdXFrQ2V3VnZoeUJBPT0K",
-      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.7/Z-Image.Studio_0.2.7_x64_zh-CN.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVSQjhCajRiUjRFS0pMZlp1MGs0aklJczhiK0JuNjhzVGJvZWF3dEJLR2xRVkJHaFU3THY5QnhCaUs3UTZyN1RWaTBlQWJIQ1RWNHp4YzlpTlRjeW1tbEI2dHczKytFWmdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkwOTk0NTYyCWZpbGU6Wi1JbWFnZSBTdHVkaW9fMC4yLjhfeDY0X3poLUNOLm1zaQl2ZXJzaW9uOjAuMi44CklCR2Q4ZnJRUnJIMU9PME8zTDVrRm9DTk10eDV1eW5HTXI1cnZTUXdIbmQyWVB3dDJPc0k2VUV5Q1F6TkZrcUxlcFo0VCt1YkhYOWwzQ2RxR3Jrb0JRPT0K",
+      "url": "https://gh-proxy.com/https://github.com/XeroLc/zimage-studio/releases/download/v0.2.8/Z-Image.Studio_0.2.8_x64_zh-CN.msi"
     }
   }
 }
